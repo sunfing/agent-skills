@@ -269,7 +269,11 @@ class ImageGenTests(unittest.TestCase):
                     client_factory=factory,
                 )
 
-            self.assertEqual([path.parent for path in paths], [pictures, pictures])
+            resolved_pictures = pictures.resolve()
+            self.assertEqual(
+                [path.parent for path in paths],
+                [resolved_pictures, resolved_pictures],
+            )
             self.assertTrue(paths[0].stem.endswith("-1"))
             self.assertTrue(paths[1].stem.endswith("-2"))
             self.assertEqual(paths[0].stem[:-2], paths[1].stem[:-2])
