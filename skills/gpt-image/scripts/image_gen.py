@@ -9,6 +9,7 @@ import ctypes
 from contextlib import ExitStack
 from datetime import datetime
 import ipaddress
+import json
 import os
 from pathlib import Path
 import re
@@ -34,6 +35,7 @@ MAX_INPUT_BYTES = 50_000_000
 MAX_MASK_BYTES = 50_000_000
 MAX_INPUT_IMAGES = 16
 MAX_PROMPT_CHARACTERS = 32_000
+MAX_ERROR_DETAIL_CHARACTERS = 4_000
 PICTURES_FOLDER_ID = uuid.UUID("33e28130-4e1e-4676-835a-98395c3bc3bb")
 INPUT_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 FORMAT_EXTENSIONS = {
@@ -94,21 +96,17 @@ def build_parser() -> argparse.ArgumentParser:
     def add_common_arguments(command: argparse.ArgumentParser) -> None:
         command.add_argument("--prompt", required=True)
         command.add_argument("--out")
-        command.add_argument("--size", type=_size, default="auto")
+        command.add_argument("--size", type=_size)
         command.add_argument(
-            "--quality", choices=("auto", "low", "medium", "high"), default="auto"
+            "--quality", choices=("auto", "low", "medium", "high")
         )
         command.add_argument(
-            "--output-format", choices=("png", "jpeg", "webp"), default="png"
+            "--output-format", choices=("png", "jpeg", "webp")
         )
         command.add_argument("--output-compression", type=_compression)
-        command.add_argument(
-            "--background", choices=("auto", "opaque"), default="auto"
-        )
-        command.add_argument(
-            "--moderation", choices=("auto", "low"), default="auto"
-        )
-        command.add_argument("--n", type=_image_count, default=1)
+        command.add_argument("--background", choices=("auto", "opaque"))
+        command.add_argument("--moderation", choices=("auto", "low"))
+        command.add_argument("--n", type=_image_count)
 
     generate = subparsers.add_parser("generate", help="Generate images from text")
     add_common_arguments(generate)
@@ -385,15 +383,17 @@ def execute(
     downloader: Callable[[str], bytes] | None = None,
 ) -> list[Path]:
     api_key, base_url = _load_config()
+    output_format = args.output_format or "png"
+    image_count = args.n if args.n is not None else 1
     if not args.prompt or len(args.prompt) > MAX_PROMPT_CHARACTERS:
         raise CliError(
             f"--prompt must contain between 1 and {MAX_PROMPT_CHARACTERS} characters."
         )
-    if args.output_compression is not None and args.output_format == "png":
+    if args.output_compression is not None and output_format == "png":
         raise CliError("--output-compression is supported only for jpeg or webp.")
 
-    output = _resolve_output_path(args.out, args.output_format)
-    candidates = _candidate_paths(output, args.n)
+    output = _resolve_output_path(args.out, output_format)
+    candidates = _candidate_paths(output, image_count)
     _require_new_paths(candidates)
 
     image_paths: list[Path] = []
@@ -423,20 +423,26 @@ def execute(
     request: dict[str, Any] = {
         "model": MODEL,
         "prompt": args.prompt,
-        "size": args.size,
-        "quality": args.quality,
-        "output_format": args.output_format,
-        "background": args.background,
-        "n": args.n,
     }
-    if args.output_compression is not None:
-        request["output_compression"] = args.output_compression
+    for name in (
+        "size",
+        "quality",
+        "output_format",
+        "output_compression",
+        "background",
+        "n",
+    ):
+        value = getattr(args, name)
+        if value is not None:
+            request[name] = value
 
     if args.operation == "generate":
-        request["moderation"] = args.moderation
+        if args.moderation is not None:
+            request["moderation"] = args.moderation
         response = client.images.generate(**request)
     else:
-        request["extra_body"] = {"moderation": args.moderation}
+        if args.moderation is not None:
+            request["extra_body"] = {"moderation": args.moderation}
         with ExitStack() as stack:
             request["image"] = [
                 stack.enter_context(path.open("rb")) for path in image_paths
@@ -454,7 +460,7 @@ def execute(
             or (443 if parsed_base_url.scheme == "https" else 80),
         )
         downloader = lambda url: _download_url(url, private_origin)
-    images = _response_bytes(response, downloader, args.n)
+    images = _response_bytes(response, downloader, image_count)
     return _write_outputs(candidates, images)
 
 
@@ -466,12 +472,68 @@ def _sanitize_error(message: str) -> str:
     return message
 
 
+def _serialize_error_detail(value: Any) -> str:
+    try:
+        if isinstance(value, bytes):
+            text = value.decode("utf-8", errors="replace")
+        elif isinstance(value, (dict, list)):
+            text = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+        else:
+            text = str(value)
+    except Exception:
+        return ""
+    return text.strip()
+
+
+def _safe_attribute(value: Any, name: str) -> Any:
+    try:
+        return getattr(value, name, None)
+    except Exception:
+        return None
+
+
+def _format_error(error: Exception) -> str:
+    message = _sanitize_error(_serialize_error_detail(error) or type(error).__name__)
+    details: list[str] = [message]
+
+    response = _safe_attribute(error, "response")
+    body = _safe_attribute(error, "body")
+    body_text = _serialize_error_detail(body) if body is not None else ""
+    if not body_text:
+        response_text = (
+            _safe_attribute(response, "text") if response is not None else None
+        )
+        body_text = (
+            _serialize_error_detail(response_text)
+            if response_text is not None
+            else ""
+        )
+    body_text = _sanitize_error(body_text)
+    if body_text and body_text not in message:
+        details.append(f"response_body={body_text[:MAX_ERROR_DETAIL_CHARACTERS]}")
+
+    request_id = _safe_attribute(error, "request_id")
+    if not request_id and response is not None:
+        headers = _safe_attribute(response, "headers")
+        try:
+            request_id = headers.get("x-request-id") if headers is not None else None
+        except Exception:
+            request_id = None
+    if request_id:
+        request_id_text = _sanitize_error(_serialize_error_detail(request_id))
+        if request_id_text and request_id_text not in message:
+            details.append(f"request_id={request_id_text}")
+
+    formatted = _sanitize_error(" | ".join(details))
+    return formatted[:MAX_ERROR_DETAIL_CHARACTERS]
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         paths = execute(args)
     except Exception as error:
-        print(f"error: {_sanitize_error(str(error))}", file=sys.stderr)
+        print(f"error: {_format_error(error)}", file=sys.stderr)
         return 1
 
     for path in paths:

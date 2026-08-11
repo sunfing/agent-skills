@@ -73,20 +73,99 @@ class ImageGenTests(unittest.TestCase):
     def test_generate_preserves_prompt_and_uses_one_fixed_model_call(self):
         prompt = "画一只猫，不要改写这个提示词。"
         factory = FakeFactory()
-        with tempfile.TemporaryDirectory() as directory, self.env():
-            output = Path(directory) / "cat.png"
+        with tempfile.TemporaryDirectory() as directory, self.env(), patch.object(
+            cli, "_pictures_dir", return_value=Path(directory)
+        ):
             paths = cli.execute(
-                self.parse("generate", "--prompt", prompt, "--out", str(output)),
+                self.parse("generate", "--prompt", prompt),
                 client_factory=factory,
             )
 
-            self.assertEqual(paths, [output.resolve()])
-            self.assertEqual(output.read_bytes(), PNG_BYTES)
-            self.assertEqual(factory.generate_kwargs["prompt"], prompt)
-            self.assertEqual(factory.generate_kwargs["model"], "gpt-image-2")
+            self.assertEqual(len(paths), 1)
+            self.assertEqual(paths[0].parent, Path(directory).resolve())
+            self.assertEqual(paths[0].suffix, ".png")
+            self.assertEqual(paths[0].read_bytes(), PNG_BYTES)
+            self.assertEqual(
+                factory.generate_kwargs,
+                {"model": "gpt-image-2", "prompt": prompt},
+            )
             self.assertEqual(factory.init_kwargs["base_url"], BASE_URL.rstrip("/"))
             self.assertEqual(factory.init_kwargs["max_retries"], 0)
             self.assertIsNone(factory.edit_kwargs)
+
+    def test_default_edit_request_contains_only_required_fields(self):
+        factory = FakeFactory()
+        with tempfile.TemporaryDirectory() as directory, self.env():
+            root = Path(directory)
+            image = root / "input.png"
+            image.write_bytes(PNG_BYTES)
+            output = root / "edited.png"
+
+            cli.execute(
+                self.parse(
+                    "edit",
+                    "--prompt",
+                    "preserve the subject",
+                    "--image",
+                    str(image),
+                    "--out",
+                    str(output),
+                ),
+                client_factory=factory,
+            )
+
+        self.assertEqual(
+            factory.edit_kwargs,
+            {
+                "model": "gpt-image-2",
+                "prompt": "preserve the subject",
+                "image": [image.resolve()],
+            },
+        )
+
+    def test_explicit_generate_options_are_forwarded(self):
+        factory = FakeFactory()
+        with tempfile.TemporaryDirectory() as directory, self.env():
+            output = Path(directory) / "cat.webp"
+            cli.execute(
+                self.parse(
+                    "generate",
+                    "--prompt",
+                    "draw a cat",
+                    "--size",
+                    "2048x1152",
+                    "--quality",
+                    "high",
+                    "--output-format",
+                    "webp",
+                    "--output-compression",
+                    "80",
+                    "--background",
+                    "opaque",
+                    "--moderation",
+                    "low",
+                    "--n",
+                    "1",
+                    "--out",
+                    str(output),
+                ),
+                client_factory=factory,
+            )
+
+        self.assertEqual(
+            factory.generate_kwargs,
+            {
+                "model": "gpt-image-2",
+                "prompt": "draw a cat",
+                "size": "2048x1152",
+                "quality": "high",
+                "output_format": "webp",
+                "output_compression": 80,
+                "background": "opaque",
+                "moderation": "low",
+                "n": 1,
+            },
+        )
 
     def test_edit_passes_multiple_images_and_mask_without_input_fidelity(self):
         factory = FakeFactory()
@@ -172,6 +251,7 @@ class ImageGenTests(unittest.TestCase):
             self.assertEqual([path.name for path in paths], ["result-1.png", "result-2.png"])
             self.assertEqual(paths[0].read_bytes(), b"one")
             self.assertEqual(paths[1].read_bytes(), b"two")
+            self.assertEqual(factory.generate_kwargs["n"], 2)
 
     def test_url_response_uses_downloader(self):
         factory = FakeFactory(response=SimpleNamespace(data=[{"url": "https://cdn.example/image"}]))
@@ -280,6 +360,90 @@ class ImageGenTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertNotIn(API_KEY, stderr.getvalue())
         self.assertIn("[REDACTED]", stderr.getvalue())
+
+    def test_error_output_includes_response_body_and_request_id(self):
+        class RelayError(RuntimeError):
+            body = {
+                "error": {
+                    "message": f"unsupported option for {API_KEY}",
+                    "code": "invalid_request_error",
+                }
+            }
+            request_id = "req_test_123"
+
+        with tempfile.TemporaryDirectory() as directory, self.env():
+            output = Path(directory) / "out.png"
+            with patch.object(cli, "OpenAI", FakeFactory(error=RelayError("400 Bad Request"))):
+                stderr = io.StringIO()
+                with redirect_stderr(stderr):
+                    code = cli.main(
+                        ["generate", "--prompt", "test", "--out", str(output)]
+                    )
+
+        message = stderr.getvalue()
+        self.assertEqual(code, 1)
+        self.assertIn("400 Bad Request", message)
+        self.assertIn("invalid_request_error", message)
+        self.assertIn("req_test_123", message)
+        self.assertNotIn(API_KEY, message)
+        self.assertIn("[REDACTED]", message)
+
+    def test_error_output_uses_response_fallback_details(self):
+        response = SimpleNamespace(
+            text='{"error":{"message":"relay rejected request"}}',
+            headers={"x-request-id": "req_header_123"},
+        )
+
+        class RelayError(RuntimeError):
+            pass
+
+        error = RelayError("400 Bad Request")
+        error.response = response
+        with tempfile.TemporaryDirectory() as directory, self.env():
+            output = Path(directory) / "out.png"
+            with patch.object(cli, "OpenAI", FakeFactory(error=error)):
+                stderr = io.StringIO()
+                with redirect_stderr(stderr):
+                    code = cli.main(
+                        ["generate", "--prompt", "test", "--out", str(output)]
+                    )
+
+        message = stderr.getvalue()
+        self.assertEqual(code, 1)
+        self.assertIn("relay rejected request", message)
+        self.assertIn("req_header_123", message)
+
+    def test_error_output_redacts_key_before_truncating_details(self):
+        boundary_key = "boundary-secret-1234567890"
+
+        class RelayError(RuntimeError):
+            body = "x" * (cli.MAX_ERROR_DETAIL_CHARACTERS - 8) + boundary_key
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ,
+            {cli.API_KEY_ENV: boundary_key, cli.BASE_URL_ENV: BASE_URL},
+            clear=True,
+        ):
+            output = Path(directory) / "out.png"
+            with patch.object(cli, "OpenAI", FakeFactory(error=RelayError("400"))):
+                stderr = io.StringIO()
+                with redirect_stderr(stderr):
+                    code = cli.main(
+                        ["generate", "--prompt", "test", "--out", str(output)]
+                    )
+
+        self.assertEqual(code, 1)
+        self.assertNotIn("boundary", stderr.getvalue())
+
+    def test_error_output_has_a_total_length_limit(self):
+        long_message = "x" * 10_000
+
+        class RelayError(RuntimeError):
+            body = long_message
+
+        formatted = cli._format_error(RelayError(long_message))
+
+        self.assertEqual(len(formatted), cli.MAX_ERROR_DETAIL_CHARACTERS)
 
     def test_response_count_mismatch_does_not_download_urls(self):
         response = SimpleNamespace(
