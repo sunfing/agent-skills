@@ -1,102 +1,92 @@
-# GPT Image Agent Skill
+# Agent Skills
 
 [English](README.md) | 简体中文
 
-一个面向 Agent Skills 兼容客户端的非官方社区 Skill。当客户端通过第三方 OpenAI-compatible 中转站而无法使用原生图片工具时，它会直接调用 OpenAI Image API，并使用固定模型 `gpt-image-2` 生成或编辑位图。
+一个统一收纳非官方 Agent Skills 的仓库，适用于支持 `SKILL.md` 格式并能够执行本地命令的 Agent 客户端。
 
-本项目与 OpenAI 无隶属关系。它不提供 API 服务、额度或密钥。
+每个 Skill 位于 [`skills/`](skills/) 下，只包含 Agent 实际运行所需的说明和资源。面向用户的安装、配置和使用指南统一放在 [`docs/`](docs/) 下。
 
-## 适用范围
+本仓库及其中的 Skills 与 OpenAI、Anthropic 或其他模型供应商无隶属关系，不提供 API 服务、额度或 API key。
 
-客户端必须能够：
+## 可用 Skills
 
-- 读取 Agent Skills 格式的 `SKILL.md`；
-- 执行本地 Python 命令；
-- 访问网络和本地文件系统；
-- 连接实现 `/v1/images/generations` 和 `/v1/images/edits` 的第三方 OpenAI-compatible 中转站。
+| Skill | 用途 | 文档 |
+| --- | --- | --- |
+| [`gpt-image`](skills/gpt-image/) | 通过用户配置的 OpenAI-compatible Image API，使用固定模型 `gpt-image-2` 生成或编辑位图。 | [English](docs/gpt-image.md) · [简体中文](docs/gpt-image.zh-CN.md) |
 
-本 Skill 不适用于不支持本地命令的纯聊天客户端，也不支持其他供应商的生图模型。
+## 使用 CC Switch 安装
 
-## 功能
+CC Switch 3.19.2+ 会递归发现仓库中的 `SKILL.md`。
 
-- 文本生成图片；
-- 单图或多参考图编辑；
-- PNG mask / inpainting；
-- 一次请求生成多张图片；
-- 自定义合规尺寸及 `auto/low/medium/high` 质量；
-- PNG、JPEG、WebP，以及 JPEG/WebP 压缩；
-- `auto/opaque` 背景和 `auto/low` moderation；
-- 默认保存到系统 Pictures 目录，且绝不覆盖已有文件。
+1. 在 CC Switch 中打开 **Skills**。
+2. 点击右上角 **仓库管理**。
+3. 点击 **添加仓库**。
+4. 输入 `https://github.com/sunfing/agent-skills`，Branch 选择 `main`。
+5. 返回 Skills 发现页面并点击 **刷新**。
+6. 搜索需要的 Skill 名称，然后安装并为目标 Agent 客户端启用。
 
-每次编辑最多接受 16 张 PNG、JPEG 或 WebP 输入图，每张小于 50 MB。使用 mask 时，mask 和第一张输入图都必须是 PNG、尺寸一致且 mask 包含 alpha channel；mask 也必须小于 50 MB。`--n` 的范围是 `1..10`，prompt 最长 32,000 个字符。
+Skills 发现页面的搜索框只过滤已配置仓库中发现的 Skill。把 GitHub URL 粘贴到搜索框不会添加仓库。
 
-`gpt-image-2` 不支持透明背景。该 Skill 也不使用 Responses、streaming partial images、Batch、视频、音频或自动模型 fallback。
+安装完成后，请继续阅读对应 Skill 的文档，完成依赖安装、环境变量配置和验证。
 
-## 安装
+## 使用 Codex 安装单个 Skill
 
-安装 Python 3.10+，将 `skills/gpt-image` 复制到客户端规定的 Skills 目录，然后安装依赖：
+使用 Codex 自带的 Skill Installer，并指定需要安装的 Skill 目录。
 
-```shell
-python -m pip install -r <skills-directory>/gpt-image/requirements.txt
-```
-
-Codex 的默认目标目录是：
-
-- Windows：`%USERPROFILE%\.codex\skills\gpt-image`
-- macOS/Linux：`~/.codex/skills/gpt-image`
-
-其他客户端应使用各自文档指定的 Skills 目录。安装后重新开启 Agent 任务，使 Skill metadata 生效。
-
-## 配置
-
-不要把密钥写进仓库或 `SKILL.md`。PowerShell 用户级配置：
+Windows PowerShell：
 
 ```powershell
-[Environment]::SetEnvironmentVariable("GPT_IMAGE_API_KEY", "your-key", "User")
-[Environment]::SetEnvironmentVariable("GPT_IMAGE_BASE_URL", "https://relay.example.com/v1", "User")
+python "$env:USERPROFILE\.codex\skills\.system\skill-installer\scripts\install-skill-from-github.py" `
+  --repo sunfing/agent-skills `
+  --ref main `
+  --path skills/gpt-image `
+  --dest "$env:USERPROFILE\.codex\skills"
 ```
 
-Bash/Zsh 当前会话配置：
+macOS/Linux：
 
 ```shell
-export GPT_IMAGE_API_KEY="your-key"
-export GPT_IMAGE_BASE_URL="https://relay.example.com/v1"
+python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
+  --repo sunfing/agent-skills \
+  --ref main \
+  --path skills/gpt-image \
+  --dest ~/.codex/skills
 ```
 
-`GPT_IMAGE_BASE_URL` 必须是完整 API 根地址并以 `/v1` 结尾。配置持久环境变量后，应重启 Agent 客户端。
+目标 Skill 目录已经存在时，安装器会拒绝覆盖。应使用最初安装它的工具进行更新或卸载，不要混用安装管理方式。
 
-## 使用
+## 手工安装
 
-自然语言请求示例：
+Clone 或下载本仓库，然后只将需要的 `skills/<skill-name>` 目录复制到 Agent 客户端规定的 Skills 目录，并保持 Skill 目录名不变。
+
+Codex 的默认目标目录通常是 Windows 的 `%USERPROFILE%\.codex\skills\<skill-name>`，或 macOS/Linux 的 `~/.codex/skills/<skill-name>`。
+
+## 仓库结构
 
 ```text
-$gpt-image 生成一只戴宇航员头盔的橘猫，像素插画风格，纯色背景。
+agent-skills/
+├── skills/
+│   └── gpt-image/
+│       ├── SKILL.md
+│       ├── agents/
+│       ├── requirements.txt
+│       └── scripts/
+├── docs/
+│   ├── gpt-image.md
+│   └── gpt-image.zh-CN.md
+└── tests/
 ```
-
-```text
-$gpt-image 以这两张图片为参考，保留主体服装，把背景改成雨夜街道。
-```
-
-Agent 会调用一次仓库自带 CLI。也可以直接运行：
-
-```shell
-python skills/gpt-image/scripts/image_gen.py generate --prompt "A pixel-art orange cat wearing an astronaut helmet"
-```
-
-```shell
-python skills/gpt-image/scripts/image_gen.py edit --prompt "Replace the background with a rainy street" --image input.png --out output.png
-```
-
-使用 `--help` 查看所有参数。默认文件名为 `yyyyMMdd-HHmmss-fff-<uuid>.png`。传入 `--n` 大于 1 时，文件名会增加数字后缀。
-
-CLI 每次只发送一次付费生成或编辑请求，显式关闭 SDK 自动重试。若兼容中转站返回图片 URL，保存图片可能额外执行普通下载请求；下载仅允许公网地址或与已配置 relay 相同的主机，并限制为 100 MiB。
 
 ## 开发验证
 
-以下测试不会调用真实 API：
+当前测试使用 mock，不会调用真实或付费 API：
 
 ```shell
 python -m unittest discover -s tests -v
 ```
 
-API 行为依据 [OpenAI GPT Image 2](https://developers.openai.com/api/docs/models/gpt-image-2) 和 [Image generation](https://developers.openai.com/api/docs/guides/image-generation) 官方文档。
+各 Skill 的具体开发和验证要求以对应文档为准。
+
+## 许可证
+
+[MIT](LICENSE)

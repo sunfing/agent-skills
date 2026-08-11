@@ -1,72 +1,92 @@
-# GPT Image Agent Skill
+# Agent Skills
 
 English | [简体中文](README.zh-CN.md)
 
-An unofficial Agent Skill for generating and editing bitmap images with the fixed OpenAI `gpt-image-2` model through a user-configured OpenAI-compatible relay. It is intended for skills-compatible agents that can run local Python commands but cannot use a native hosted image tool.
+A collection of unofficial, self-contained Skills for Agent clients that support the `SKILL.md` format and local command execution.
 
-## Requirements
+Each Skill lives under [`skills/`](skills/) and includes only the instructions and resources required by the Agent. User-facing installation, configuration, and usage guides live under [`docs/`](docs/).
 
-- Python 3.10+
-- Local command, network, and filesystem access
-- An OpenAI-compatible relay implementing `/v1/images/generations` and `/v1/images/edits`
-- `GPT_IMAGE_API_KEY` and a complete `GPT_IMAGE_BASE_URL` ending in `/v1`
+This repository and its Skills are not affiliated with OpenAI, Anthropic, or any other model provider. They do not provide API services, credits, or API keys.
 
-## Install
+## Available Skills
 
-Copy `skills/gpt-image` into the client-specific Skills directory, then install its dependency:
+| Skill | Purpose | Documentation |
+| --- | --- | --- |
+| [`gpt-image`](skills/gpt-image/) | Generate and edit bitmap images with the fixed `gpt-image-2` model through a user-configured OpenAI-compatible Image API. | [English](docs/gpt-image.md) · [简体中文](docs/gpt-image.zh-CN.md) |
 
-```shell
-python -m pip install -r <skills-directory>/gpt-image/requirements.txt
-```
+## Install with CC Switch
 
-For Codex, the default destination is `%USERPROFILE%\.codex\skills\gpt-image` on Windows or `~/.codex/skills/gpt-image` on macOS/Linux. Use the directory documented by your client for other agents, then start a new task so the client reloads the Skill metadata.
+CC Switch 3.19.2+ recursively discovers `SKILL.md` files in a repository.
 
-## Configure
+1. Open **Skills** in CC Switch.
+2. Click **Repository Manager** (`仓库管理`) in the upper-right corner.
+3. Click **Add Repository** (`添加仓库`).
+4. Enter `https://github.com/sunfing/agent-skills` and select branch `main`.
+5. Return to the Skills discovery page and click **Refresh**.
+6. Search for the Skill name, then install and enable it for the required Agent client.
 
-PowerShell user-level environment:
+The discovery-page search box only filters Skills from configured repositories. It does not add a repository when a GitHub URL is pasted into it.
+
+After installation, follow the selected Skill's documentation for dependencies, environment variables, and verification.
+
+## Install one Skill with Codex
+
+Use Codex's bundled Skill Installer and pass the directory of the required Skill.
+
+Windows PowerShell:
 
 ```powershell
-[Environment]::SetEnvironmentVariable("GPT_IMAGE_API_KEY", "your-key", "User")
-[Environment]::SetEnvironmentVariable("GPT_IMAGE_BASE_URL", "https://relay.example.com/v1", "User")
+python "$env:USERPROFILE\.codex\skills\.system\skill-installer\scripts\install-skill-from-github.py" `
+  --repo sunfing/agent-skills `
+  --ref main `
+  --path skills/gpt-image `
+  --dest "$env:USERPROFILE\.codex\skills"
 ```
 
-Bash/Zsh current session:
+macOS/Linux:
 
 ```shell
-export GPT_IMAGE_API_KEY="your-key"
-export GPT_IMAGE_BASE_URL="https://relay.example.com/v1"
+python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
+  --repo sunfing/agent-skills \
+  --ref main \
+  --path skills/gpt-image \
+  --dest ~/.codex/skills
 ```
 
-Restart the agent after setting persistent environment variables. Never put credentials in this repository or in `SKILL.md`.
+The installer refuses to overwrite an existing Skill directory. Update or remove an existing installation through the tool that originally installed it instead of mixing installation ownership.
 
-## Use
+## Manual installation
 
-Invoke the Skill naturally:
+Clone or download this repository, then copy only the required `skills/<skill-name>` directory into the Skills directory documented by your Agent client. Preserve the Skill directory name.
+
+For Codex, the destination is normally `%USERPROFILE%\.codex\skills\<skill-name>` on Windows or `~/.codex/skills/<skill-name>` on macOS/Linux.
+
+## Repository layout
 
 ```text
-$gpt-image Generate a pixel-art orange cat wearing an astronaut helmet on a solid background.
+agent-skills/
+├── skills/
+│   └── gpt-image/
+│       ├── SKILL.md
+│       ├── agents/
+│       ├── requirements.txt
+│       └── scripts/
+├── docs/
+│   ├── gpt-image.md
+│   └── gpt-image.zh-CN.md
+└── tests/
 ```
 
-Or run the bundled CLI directly:
+## Development
 
-```shell
-python skills/gpt-image/scripts/image_gen.py generate --prompt "A pixel-art orange cat wearing an astronaut helmet"
-```
-
-```shell
-python skills/gpt-image/scripts/image_gen.py edit --prompt "Replace the background with a rainy street" --image input.png --out output.png
-```
-
-Run `python skills/gpt-image/scripts/image_gen.py --help` for the command surface. Each edit accepts at most 16 PNG, JPEG, or WebP inputs under 50 MB each. With a mask, both the mask and first input must be PNG with matching dimensions, and the mask must contain an alpha channel. The `--n` range is `1..10`, and prompts are limited to 32,000 characters. The CLI makes one paid Image API request, disables SDK retries, preserves prompts by default, refuses overwrites, and never stores credentials. If a compatible relay returns an image URL instead of base64 data, saving the artifact may require an additional ordinary download limited to 100 MiB and restricted to public hosts or the configured relay host.
-
-## Test
-
-The test suite uses mocks and does not call a live API:
+The current test suite uses mocks and does not call a live or paid API:
 
 ```shell
 python -m unittest discover -s tests -v
 ```
 
-API behavior follows the official [OpenAI GPT Image 2](https://developers.openai.com/api/docs/models/gpt-image-2) and [Image generation](https://developers.openai.com/api/docs/guides/image-generation) documentation.
+See each Skill's documentation for its exact development and validation requirements.
 
-This project is not affiliated with OpenAI and does not provide an API service, credits, or keys.
+## License
+
+[MIT](LICENSE)
