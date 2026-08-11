@@ -253,6 +253,30 @@ class ImageGenTests(unittest.TestCase):
             self.assertEqual(paths[1].read_bytes(), b"two")
             self.assertEqual(factory.generate_kwargs["n"], 2)
 
+    def test_unspecified_count_saves_all_returned_images(self):
+        response = SimpleNamespace(
+            data=[
+                {"b64_json": base64.b64encode(b"one").decode()},
+                {"b64_json": base64.b64encode(b"two").decode()},
+            ]
+        )
+        factory = FakeFactory(response=response)
+        with tempfile.TemporaryDirectory() as directory, self.env():
+            pictures = Path(directory)
+            with patch.object(cli, "_pictures_dir", return_value=pictures):
+                paths = cli.execute(
+                    self.parse("generate", "--prompt", "test"),
+                    client_factory=factory,
+                )
+
+            self.assertEqual([path.parent for path in paths], [pictures, pictures])
+            self.assertTrue(paths[0].stem.endswith("-1"))
+            self.assertTrue(paths[1].stem.endswith("-2"))
+            self.assertEqual(paths[0].stem[:-2], paths[1].stem[:-2])
+            self.assertEqual(paths[0].read_bytes(), b"one")
+            self.assertEqual(paths[1].read_bytes(), b"two")
+            self.assertNotIn("n", factory.generate_kwargs)
+
     def test_url_response_uses_downloader(self):
         factory = FakeFactory(response=SimpleNamespace(data=[{"url": "https://cdn.example/image"}]))
         calls = []
@@ -445,13 +469,22 @@ class ImageGenTests(unittest.TestCase):
 
         self.assertEqual(len(formatted), cli.MAX_ERROR_DETAIL_CHARACTERS)
 
-    def test_response_count_mismatch_does_not_download_urls(self):
+    def test_explicit_response_count_mismatch_does_not_download_urls(self):
         response = SimpleNamespace(
             data=[{"url": "https://cdn.example/one"}, {"url": "https://cdn.example/two"}]
         )
         downloads = []
         with self.assertRaisesRegex(cli.CliError, "returned 2 images; expected 1"):
             cli._response_bytes(response, downloads.append, 1)
+        self.assertEqual(downloads, [])
+
+    def test_unspecified_count_rejects_more_than_ten_images(self):
+        response = SimpleNamespace(
+            data=[{"url": f"https://cdn.example/{index}"} for index in range(11)]
+        )
+        downloads = []
+        with self.assertRaisesRegex(cli.CliError, "returned 11 images; at most 10"):
+            cli._response_bytes(response, downloads.append, None)
         self.assertEqual(downloads, [])
 
     def test_failed_write_removes_partial_output(self):

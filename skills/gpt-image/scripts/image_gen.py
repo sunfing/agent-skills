@@ -34,6 +34,7 @@ MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024
 MAX_INPUT_BYTES = 50_000_000
 MAX_MASK_BYTES = 50_000_000
 MAX_INPUT_IMAGES = 16
+MAX_OUTPUT_IMAGES = 10
 MAX_PROMPT_CHARACTERS = 32_000
 MAX_ERROR_DETAIL_CHARACTERS = 4_000
 PICTURES_FOLDER_ID = uuid.UUID("33e28130-4e1e-4676-835a-98395c3bc3bb")
@@ -51,8 +52,10 @@ class CliError(RuntimeError):
 
 def _image_count(value: str) -> int:
     parsed = int(value)
-    if not 1 <= parsed <= 10:
-        raise argparse.ArgumentTypeError("must be between 1 and 10")
+    if not 1 <= parsed <= MAX_OUTPUT_IMAGES:
+        raise argparse.ArgumentTypeError(
+            f"must be between 1 and {MAX_OUTPUT_IMAGES}"
+        )
     return parsed
 
 
@@ -330,14 +333,22 @@ def _item_value(item: Any, name: str) -> Any:
 
 
 def _response_bytes(
-    response: Any, downloader: Callable[[str], bytes], expected_count: int
+    response: Any,
+    downloader: Callable[[str], bytes],
+    expected_count: int | None,
 ) -> list[bytes]:
     items = getattr(response, "data", None)
     if not items:
         raise CliError("The API returned no image data.")
-    if len(items) != expected_count:
+    actual_count = len(items)
+    if actual_count > MAX_OUTPUT_IMAGES:
         raise CliError(
-            f"The API returned {len(items)} images; expected {expected_count}."
+            f"The API returned {actual_count} images; at most "
+            f"{MAX_OUTPUT_IMAGES} are accepted."
+        )
+    if expected_count is not None and actual_count != expected_count:
+        raise CliError(
+            f"The API returned {actual_count} images; expected {expected_count}."
         )
 
     images: list[bytes] = []
@@ -384,7 +395,7 @@ def execute(
 ) -> list[Path]:
     api_key, base_url = _load_config()
     output_format = args.output_format or "png"
-    image_count = args.n if args.n is not None else 1
+    expected_count = args.n
     if not args.prompt or len(args.prompt) > MAX_PROMPT_CHARACTERS:
         raise CliError(
             f"--prompt must contain between 1 and {MAX_PROMPT_CHARACTERS} characters."
@@ -393,8 +404,8 @@ def execute(
         raise CliError("--output-compression is supported only for jpeg or webp.")
 
     output = _resolve_output_path(args.out, output_format)
-    candidates = _candidate_paths(output, image_count)
-    _require_new_paths(candidates)
+    preflight_paths = _candidate_paths(output, expected_count or 1)
+    _require_new_paths(preflight_paths)
 
     image_paths: list[Path] = []
     mask_path: Path | None = None
@@ -460,7 +471,8 @@ def execute(
             or (443 if parsed_base_url.scheme == "https" else 80),
         )
         downloader = lambda url: _download_url(url, private_origin)
-    images = _response_bytes(response, downloader, image_count)
+    images = _response_bytes(response, downloader, expected_count)
+    candidates = _candidate_paths(output, len(images))
     return _write_outputs(candidates, images)
 
 

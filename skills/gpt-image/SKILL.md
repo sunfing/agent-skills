@@ -16,7 +16,7 @@ Use the bundled `scripts/image_gen.py` directly. Do not load or call a hosted im
 
 ## Workflow
 
-1. Preserve the user's prompt exactly unless the user explicitly asks for prompt rewriting.
+1. Preserve the user's prompt exactly unless the user explicitly asks for prompt rewriting. When the request contains a contextual reference such as "this," "that," or "the same style," resolve only the referenced subject, style, and constraints from the conversation. Do not invent composition, colors, content, exclusions, branding, or text requirements; ask the user when the reference does not identify a concrete image request.
 2. Choose `generate` when there is no input image. Choose `edit` when the user provides one or more reference images.
 3. Resolve every user-provided input, mask, and output path to an absolute path.
 4. Run exactly one live CLI command. Do not run a dry-run, API preflight, automatic retry, or provider/model fallback.
@@ -43,6 +43,8 @@ Pass user-requested supported options when present:
 - `--background auto|opaque`
 - `--moderation auto|low`
 - `--n <1..10>`
+
+Do not pass `--n` for a single-image request. Pass it only when the user explicitly requests more than one image. When `--n` is omitted, accept, save, embed, and report every image returned by the API, up to the CLI limit of 10.
 
 When the user does not explicitly provide an output path, omit `--out` entirely and let the CLI select the platform Pictures directory and a collision-resistant filename. Never invent an output path or filename, and never default to the task directory, workspace, current working directory, or an `outputs` directory. Never add `--force`; the CLI refuses to overwrite existing files.
 
