@@ -44,7 +44,7 @@ Pass user-requested supported options when present:
 - `--moderation auto|low`
 - `--n <1..10>`
 
-When `--out` is omitted, let the CLI select the platform Pictures directory and a collision-resistant filename. Never add `--force`; the CLI refuses to overwrite existing files.
+When the user does not explicitly provide an output path, omit `--out` entirely and let the CLI select the platform Pictures directory and a collision-resistant filename. Never invent an output path or filename, and never default to the task directory, workspace, current working directory, or an `outputs` directory. Never add `--force`; the CLI refuses to overwrite existing files.
 
 ## Boundaries
 
