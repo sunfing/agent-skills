@@ -20,7 +20,7 @@ Use the bundled `scripts/image_gen.py` directly. Do not load or call a hosted im
 2. Choose `generate` when there is no input image. Choose `edit` when the user provides one or more reference images.
 3. Resolve every user-provided input, mask, and output path to an absolute path.
 4. Run exactly one live CLI command. Do not run a dry-run, API preflight, automatic retry, or provider/model fallback.
-5. On success, embed each actual output image when the client supports image embedding and report every absolute output path. On failure, report the CLI error and stop.
+5. On success, embed each actual output image when the client supports image embedding and report every absolute output path. Use the absolute filesystem path directly in Markdown, never a `file://` URI. On Windows, replace `\` with `/` before placing the path in `![alt](...)` or a link (for example, `C:/Users/.../image.png`); wrap a destination containing spaces in angle brackets. On failure, report the CLI error and stop.
 
 Generate:
 
