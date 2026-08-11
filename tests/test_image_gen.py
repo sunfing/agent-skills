@@ -122,8 +122,10 @@ class ImageGenTests(unittest.TestCase):
                 client_factory=factory,
             )
 
-            self.assertEqual(factory.edit_kwargs["image"], [first, second])
-            self.assertEqual(factory.edit_kwargs["mask"], mask)
+            self.assertEqual(
+                factory.edit_kwargs["image"], [first.resolve(), second.resolve()]
+            )
+            self.assertEqual(factory.edit_kwargs["mask"], mask.resolve())
             self.assertEqual(factory.edit_kwargs["output_compression"], 80)
             self.assertEqual(factory.edit_kwargs["extra_body"], {"moderation": "low"})
             self.assertNotIn("moderation", factory.edit_kwargs)
