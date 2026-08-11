@@ -12,7 +12,7 @@
 
 | Skill | 用途 | 文档 |
 | --- | --- | --- |
-| [`gpt-image`](skills/gpt-image/) | 通过用户配置的 OpenAI-compatible Image API，使用固定模型 `gpt-image-2` 生成或编辑位图。 | [English](docs/gpt-image.md) · [简体中文](docs/gpt-image.zh-CN.md) |
+| [`gpt-image`](skills/gpt-image/) | 通过用户配置的 OpenAI-compatible Image API，使用固定模型 `gpt-image-2` 生成或编辑位图。 | [English](docs/gpt-image/README.md) · [简体中文](docs/gpt-image/README.zh-CN.md) |
 
 ## 使用 CC Switch 安装
 
@@ -72,8 +72,9 @@ agent-skills/
 │       ├── requirements.txt
 │       └── scripts/
 ├── docs/
-│   ├── gpt-image.md
-│   └── gpt-image.zh-CN.md
+│   └── gpt-image/
+│       ├── README.md
+│       └── README.zh-CN.md
 └── tests/
 ```
 

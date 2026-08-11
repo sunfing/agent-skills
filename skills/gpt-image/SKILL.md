@@ -1,6 +1,6 @@
 ---
 name: gpt-image
-description: Generate or edit bitmap images with OpenAI GPT Image through a user-configured OpenAI-compatible Image API, using the bundled CLI and the fixed gpt-image-2 model. Use when the user invokes $gpt-image, asks to use GPT Image through a third-party relay, or naturally requests bitmap generation or editing while the agent's native image tool is unavailable. Do not use when the user names another Skill, provider, or model, or requests SVG, HTML/CSS, Canvas, Three.js, vector, or other code-drawn output.
+description: Generate or edit bitmap images with OpenAI GPT Image through a user-configured OpenAI-compatible Image API, using the bundled CLI and the fixed gpt-image-2 model. Use for natural-language bitmap generation or editing requests, including generating an image, drawing a subject, modifying an existing image, using reference images, or applying a mask, even when the user does not explicitly invoke $gpt-image. Do not use when the user names another Skill, provider, or model, or requests SVG, HTML/CSS, Canvas, Three.js, vector, or other code-drawn output.
 ---
 
 # GPT Image

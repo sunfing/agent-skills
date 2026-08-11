@@ -1,6 +1,6 @@
 # GPT Image Agent Skill
 
-[Skills 总目录](../README.zh-CN.md) | [English](gpt-image.md) | 简体中文
+[Skills 总目录](../../README.zh-CN.md) | [English](README.md) | 简体中文
 
 一个非官方 Agent Skill，通过用户配置的 OpenAI-compatible Image API 中转站直接调用固定模型 `gpt-image-2`。它适用于能够执行本地命令，但在第三方中转环境中无法获得原生 Hosted 生图工具的 Agent 客户端。
 
@@ -197,6 +197,23 @@ export GPT_IMAGE_API_KEY GPT_IMAGE_BASE_URL
 ### 重启 Agent
 
 设置持久环境变量后，应完全退出并重新启动 Agent 客户端。仅新建会话可能不会刷新父进程环境。重启后还应新建任务，让客户端重新加载 Skill metadata。
+
+## 可选：在 Codex 中将 GPT Image 设为默认生图路由
+
+本 Skill 已允许隐式调用：自然语言位图生成或编辑请求与 Skill description 匹配时，即使用户没有输入 `$gpt-image`，Codex 也可以自动选择它。如果 Codex 中还存在其他图像 Skill 或原生图像工具，并希望这些请求优先使用 `$gpt-image`，可在全局 Codex `AGENTS.md` 中增加以下规则。
+
+- Windows：`%USERPROFILE%\.codex\AGENTS.md`
+- macOS/Linux：`~/.codex/AGENTS.md`
+
+```markdown
+## 默认位图生成路由
+
+- 用户自然语言要求生成或编辑位图时，默认使用 `$gpt-image`，无需用户显式写出 Skill 名称。
+- 用户明确指定其他 Skill、provider、model，或要求 SVG、HTML/CSS、Canvas、Three.js、vector、代码绘图时，服从用户指定。
+- 除非用户要求改写，否则原样传递用户 prompt。
+```
+
+这是可选的 Codex 全局偏好，不是隐式调用的必要条件；用户的明确选择仍然优先。如果 Codex home 目录中存在非空 `AGENTS.override.md`，Codex 会使用它而不是全局 `AGENTS.md`。修改全局规则后，应重启 Codex 并新建任务。具体机制参见 OpenAI 官方 [Skill 调用文档](https://learn.chatgpt.com/docs/build-skills)与 [`AGENTS.md` 文档](https://learn.chatgpt.com/docs/agent-configuration/agents-md)。
 
 ## 无付费验证
 

@@ -1,6 +1,6 @@
 # GPT Image Agent Skill
 
-[Skills catalog](../README.md) | English | [简体中文](gpt-image.zh-CN.md)
+[Skills catalog](../../README.md) | English | [简体中文](README.zh-CN.md)
 
 An unofficial Agent Skill that calls the OpenAI-compatible Image API directly with the fixed `gpt-image-2` model. It is intended for Agent clients that can run local commands but cannot expose a native hosted image tool when connected through a third-party relay.
 
@@ -197,6 +197,23 @@ Launch the Agent from this shell so it inherits the variables. For persistent co
 ### Restart the Agent
 
 Fully quit and restart the Agent client after setting persistent variables. Opening only a new conversation may not reload the parent process environment. Start a new task after the restart so the client also reloads Skill metadata.
+
+## Optional: Make GPT Image the default in Codex
+
+This Skill already permits implicit invocation: Codex can select it when a natural-language bitmap generation or editing request matches the Skill description, even when the user does not type `$gpt-image`. If Codex also has another image Skill or a native image tool and you want these requests to prefer `$gpt-image`, add the following guidance to the global Codex `AGENTS.md`.
+
+- Windows: `%USERPROFILE%\.codex\AGENTS.md`
+- macOS/Linux: `~/.codex/AGENTS.md`
+
+```markdown
+## Default bitmap generation route
+
+- For natural-language bitmap generation or editing requests, use `$gpt-image` by default even when the user does not explicitly name it.
+- Follow explicit requests for another Skill, provider, model, or SVG, HTML/CSS, Canvas, Three.js, vector, or other code-drawn output.
+- Pass the user's prompt unchanged unless the user asks for rewriting.
+```
+
+This is an optional Codex-wide preference, not a requirement for implicit invocation. Explicit user choices still take precedence. If a non-empty `AGENTS.override.md` exists in the Codex home directory, Codex uses it instead of the global `AGENTS.md`. Restart Codex and start a new task after changing global guidance. See the official OpenAI documentation for [Skill invocation](https://learn.chatgpt.com/docs/build-skills) and [`AGENTS.md`](https://learn.chatgpt.com/docs/agent-configuration/agents-md).
 
 ## Verify without a paid request
 
