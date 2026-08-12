@@ -138,7 +138,7 @@ python3 -m pip install -r ~/.codex/skills/gpt-image/requirements.txt
 | 变量 | 必须填写的值 |
 | --- | --- |
 | `GPT_IMAGE_API_KEY` | 中转站提供的有效 key |
-| `GPT_IMAGE_BASE_URL` | 以 `/v1` 结尾的完整 HTTP(S) API 根地址 |
+| `GPT_IMAGE_BASE_URL` | 以 `/v1` 结尾的完整 HTTPS API 根地址 |
 
 不要把凭据写入本仓库、`SKILL.md` 或 prompt。
 
@@ -151,8 +151,8 @@ $gptImageSecureKey = Read-Host "Enter GPT_IMAGE_API_KEY" -AsSecureString
 $gptImageKey = [System.Net.NetworkCredential]::new("", $gptImageSecureKey).Password
 $gptImageBaseUrl = (Read-Host "Enter GPT_IMAGE_BASE_URL ending in /v1").Trim().TrimEnd("/")
 
-if ($gptImageBaseUrl -notmatch '^https?://.+/v1$') {
-    throw "GPT_IMAGE_BASE_URL must be a complete HTTP(S) API root ending in /v1."
+if ($gptImageBaseUrl -notmatch '^https://.+/v1$') {
+    throw "GPT_IMAGE_BASE_URL must be a complete HTTPS API root ending in /v1."
 }
 
 [Environment]::SetEnvironmentVariable("GPT_IMAGE_API_KEY", $gptImageKey, "User")
@@ -305,7 +305,11 @@ python "/path/to/gpt-image/scripts/image_gen.py" edit \
 
 Agent 进程没有获得 `GPT_IMAGE_API_KEY`。确认变量已经设置，然后完全重启 Agent 应用。已经运行的桌面进程内部新建任务，仍可能继承旧环境。
 
-### `GPT_IMAGE_BASE_URL must end in /v1.`
+### `error: GPT_IMAGE_BASE_URL must use HTTPS and be an absolute URL.`
+
+中转站 URL 必须使用 `https://`；HTTP 明文传输会泄露 API key、prompt 和输入图片。
+
+### `error: GPT_IMAGE_BASE_URL must be a complete API root ending in /v1.`
 
 应填写完整 API 根地址，例如 `https://relay.example.com/v1`，不能填写网站首页，也不能填写完整的 `/images/generations` endpoint。
 

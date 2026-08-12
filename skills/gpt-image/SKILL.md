@@ -11,7 +11,7 @@ Use the bundled `scripts/image_gen.py` directly. Do not load or call a hosted im
 
 - Require Python 3.10+ and the dependencies in `requirements.txt`.
 - Read credentials only from `GPT_IMAGE_API_KEY` and `GPT_IMAGE_BASE_URL`.
-- Require `GPT_IMAGE_BASE_URL` to be a complete OpenAI-compatible API root ending in `/v1`.
+- Require `GPT_IMAGE_BASE_URL` to be a complete HTTPS OpenAI-compatible API root ending in `/v1`.
 - Never print, persist, or pass the API key as a command-line argument.
 
 ## Workflow
@@ -19,7 +19,7 @@ Use the bundled `scripts/image_gen.py` directly. Do not load or call a hosted im
 1. Preserve the user's prompt exactly unless the user explicitly asks for prompt rewriting. When the request contains a contextual reference such as "this," "that," or "the same style," resolve only the referenced subject, style, and constraints from the conversation. Do not invent composition, colors, content, exclusions, branding, or text requirements; ask the user when the reference does not identify a concrete image request.
 2. Choose `generate` when there is no input image. Choose `edit` when the user provides one or more reference images.
 3. Resolve every user-provided input, mask, and output path to an absolute path.
-4. Run exactly one live CLI command. Set the shell or command-tool timeout to at least 360 seconds (`timeout_ms >= 360000` or equivalent) so it exceeds the CLI's 300-second request timeout. Never use a short or default outer timeout. Do not run a dry-run, API preflight, automatic retry, or provider/model fallback.
+4. Run exactly one live CLI command. Set the shell or command-tool timeout to at least 360 seconds (`timeout_ms >= 360000` or equivalent). The SDK's 300-second timeout applies to individual network operations, while the outer timeout bounds the complete CLI run. Never use a short or default outer timeout. Do not run a dry-run, API preflight, automatic retry, or provider/model fallback.
 5. Treat an outer shell timeout as an unknown delivery state, not proof that the API failed. Do not issue another image request. Check whether the original process is still running and wait for it without starting a second CLI; also check the selected output directory for newly created late output. If an image appears, embed and report it. If no process or output remains, report the outer execution timeout without claiming provider failure.
 6. On success, embed each actual output image when the client supports image embedding and report every absolute output path. Use the absolute filesystem path directly in Markdown, never a `file://` URI. On Windows, replace `\` with `/` before placing the path in `![alt](...)` or a link (for example, `C:/Users/.../image.png`); wrap a destination containing spaces in angle brackets. On failure, report the CLI error and stop.
 
@@ -52,6 +52,7 @@ When the user does not explicitly provide an output path, omit `--out` entirely 
 ## Boundaries
 
 - Use only the fixed API model `gpt-image-2` through `/v1/images/generations` or `/v1/images/edits`.
+- Accept only inline `b64_json` image data returned by the Image API; do not download provider-returned URLs.
 - Do not pass `input_fidelity`; `gpt-image-2` always processes image inputs at high fidelity.
 - Do not request transparent backgrounds; `gpt-image-2` supports only `auto` and `opaque` backgrounds.
 - Do not use Responses, streaming partial images, Batch, video, audio, or non-OpenAI image models.

@@ -138,7 +138,7 @@ The Skill reads credentials only from these environment variables:
 | Variable | Required value |
 | --- | --- |
 | `GPT_IMAGE_API_KEY` | A valid key for your relay |
-| `GPT_IMAGE_BASE_URL` | A complete HTTP(S) API root ending in `/v1` |
+| `GPT_IMAGE_BASE_URL` | A complete HTTPS API root ending in `/v1` |
 
 Never write credentials into this repository, `SKILL.md`, or a prompt.
 
@@ -151,8 +151,8 @@ $gptImageSecureKey = Read-Host "Enter GPT_IMAGE_API_KEY" -AsSecureString
 $gptImageKey = [System.Net.NetworkCredential]::new("", $gptImageSecureKey).Password
 $gptImageBaseUrl = (Read-Host "Enter GPT_IMAGE_BASE_URL ending in /v1").Trim().TrimEnd("/")
 
-if ($gptImageBaseUrl -notmatch '^https?://.+/v1$') {
-    throw "GPT_IMAGE_BASE_URL must be a complete HTTP(S) API root ending in /v1."
+if ($gptImageBaseUrl -notmatch '^https://.+/v1$') {
+    throw "GPT_IMAGE_BASE_URL must be a complete HTTPS API root ending in /v1."
 }
 
 [Environment]::SetEnvironmentVariable("GPT_IMAGE_API_KEY", $gptImageKey, "User")
@@ -305,7 +305,11 @@ If `--out` is omitted, the Skill saves to the platform Pictures directory with a
 
 The Agent process did not receive `GPT_IMAGE_API_KEY`. Confirm that the variable exists, then fully restart the Agent application. A new task inside an already-running desktop process may still use the old environment.
 
-### `GPT_IMAGE_BASE_URL must end in /v1.`
+### `error: GPT_IMAGE_BASE_URL must use HTTPS and be an absolute URL.`
+
+Use an `https://` relay URL. Plain HTTP would expose the API key, prompt, and input images in transit.
+
+### `error: GPT_IMAGE_BASE_URL must be a complete API root ending in /v1.`
 
 Use the complete API root, such as `https://relay.example.com/v1`, not the website homepage and not the full `/images/generations` endpoint.
 

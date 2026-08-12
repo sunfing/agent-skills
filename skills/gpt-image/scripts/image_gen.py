@@ -5,24 +5,27 @@ from __future__ import annotations
 
 import argparse
 import base64
+import binascii
 import ctypes
 from contextlib import ExitStack
 from datetime import datetime
-import ipaddress
 import json
 import os
 from pathlib import Path
 import re
-import socket
+import stat
+import struct
 import sys
-from typing import Any, Callable, Sequence
+import tempfile
+from typing import Any, BinaryIO, Callable, Sequence
 from urllib.parse import urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
 import uuid
+import zlib
 
 try:
-    from openai import OpenAI
+    from openai import DefaultHttpxClient, OpenAI
 except ImportError:  # pragma: no cover - exercised only without dependencies
+    DefaultHttpxClient = None  # type: ignore[assignment]
     OpenAI = None  # type: ignore[assignment]
 
 
@@ -30,13 +33,14 @@ MODEL = "gpt-image-2"
 API_KEY_ENV = "GPT_IMAGE_API_KEY"
 BASE_URL_ENV = "GPT_IMAGE_BASE_URL"
 REQUEST_TIMEOUT_SECONDS = 300.0
-MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024
 MAX_INPUT_BYTES = 50_000_000
 MAX_MASK_BYTES = 50_000_000
 MAX_INPUT_IMAGES = 16
 MAX_OUTPUT_IMAGES = 10
 MAX_PROMPT_CHARACTERS = 32_000
 MAX_ERROR_DETAIL_CHARACTERS = 4_000
+IO_CHUNK_BYTES = 64 * 1024
+BASE64_DECODE_CHUNK_CHARACTERS = 1024 * 1024
 PICTURES_FOLDER_ID = uuid.UUID("33e28130-4e1e-4676-835a-98395c3bc3bb")
 INPUT_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 FORMAT_EXTENSIONS = {
@@ -124,8 +128,8 @@ def build_parser() -> argparse.ArgumentParser:
 def _validate_base_url(value: str) -> str:
     normalized = value.rstrip("/")
     parsed = urlsplit(normalized)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise CliError(f"{BASE_URL_ENV} must be an absolute HTTP(S) URL.")
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise CliError(f"{BASE_URL_ENV} must use HTTPS and be an absolute URL.")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise CliError(
             f"{BASE_URL_ENV} must not contain credentials, a query, or a fragment."
@@ -257,73 +261,157 @@ def _resolve_input_path(value: str, label: str, *, mask: bool = False) -> Path:
     path = Path(value).expanduser()
     if not path.is_absolute():
         path = Path.cwd() / path
-    path = path.resolve()
-    if not path.is_file():
-        raise CliError(f"{label} is not an existing file: {path}")
+    path = Path(os.path.abspath(path))
     allowed_extensions = {".png"} if mask else INPUT_EXTENSIONS
     if path.suffix.lower() not in allowed_extensions:
         allowed = ", ".join(sorted(allowed_extensions))
         raise CliError(f"{label} must use one of these formats: {allowed}.")
-    size_limit = MAX_MASK_BYTES if mask else MAX_INPUT_BYTES
-    if path.stat().st_size >= size_limit:
-        size_mb = size_limit // 1_000_000
-        raise CliError(f"{label} must be smaller than {size_mb} MB: {path}")
     return path
 
 
-def _validate_download_url(
-    url: str, allowed_private_origin: tuple[str, int] | None
-) -> None:
-    parsed = urlsplit(url)
-    if parsed.scheme not in {"http", "https"}:
-        raise CliError("The API returned an image URL with an unsupported scheme.")
-    if not parsed.hostname:
-        raise CliError("The API returned an image URL without a hostname.")
-    if parsed.username or parsed.password:
-        raise CliError("The API returned an image URL containing credentials.")
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    if (parsed.hostname, port) == allowed_private_origin:
-        return
+def _read_exact(stream: BinaryIO, size: int) -> bytes:
+    chunks: list[bytes] = []
+    remaining = size
+    while remaining:
+        chunk = stream.read(remaining)
+        if not chunk:
+            raise EOFError
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def _png_header_info(
+    stream: BinaryIO,
+    label: str,
+    path: Path,
+    file_size: int,
+) -> tuple[int, int, int]:
+    stream.seek(0)
     try:
-        addresses = socket.getaddrinfo(
-            parsed.hostname,
-            port,
-            type=socket.SOCK_STREAM,
+        if file_size < 33 or _read_exact(stream, 8) != b"\x89PNG\r\n\x1a\n":
+            raise ValueError
+        length = struct.unpack(">I", _read_exact(stream, 4))[0]
+        chunk_type = _read_exact(stream, 4)
+        payload = _read_exact(stream, 13)
+        expected_crc = struct.unpack(">I", _read_exact(stream, 4))[0]
+        if (
+            length != 13
+            or chunk_type != b"IHDR"
+            or zlib.crc32(chunk_type + payload) & 0xFFFFFFFF != expected_crc
+        ):
+            raise ValueError
+
+        width, height, bit_depth, color_type, compression, filtering, interlace = (
+            struct.unpack(">IIBBBBB", payload)
         )
-    except OSError as error:
-        raise CliError("The API returned an image URL whose host cannot be resolved.") from error
-    if not addresses:
-        raise CliError("The API returned an image URL whose host cannot be resolved.")
-    for address in addresses:
-        ip = ipaddress.ip_address(address[4][0])
-        if not ip.is_global:
-            raise CliError("Refusing to download an image URL from a non-public host.")
+        valid_depths = {
+            0: {1, 2, 4, 8, 16},
+            2: {8, 16},
+            3: {1, 2, 4, 8},
+            4: {8, 16},
+            6: {8, 16},
+        }
+        if (
+            not width
+            or not height
+            or width > 0x7FFFFFFF
+            or height > 0x7FFFFFFF
+            or bit_depth not in valid_depths.get(color_type, set())
+            or compression != 0
+            or filtering != 0
+            or interlace not in {0, 1}
+        ):
+            raise ValueError
+    except (EOFError, OSError, ValueError, struct.error, zlib.error) as error:
+        raise CliError(f"{label} must have a valid PNG header: {path}") from error
+    finally:
+        stream.seek(0)
+
+    return width, height, color_type
 
 
-def _download_url(
-    url: str, allowed_private_origin: tuple[str, int] | None = None
-) -> bytes:
-    _validate_download_url(url, allowed_private_origin)
+def _require_image_signature(
+    stream: BinaryIO,
+    path: Path,
+    label: str,
+    file_size: int,
+) -> tuple[int, int, int] | None:
+    if path.suffix.lower() == ".png":
+        return _png_header_info(stream, label, path, file_size)
 
-    class ValidatingRedirectHandler(HTTPRedirectHandler):
-        def redirect_request(self, request, file_pointer, code, message, headers, new_url):
-            _validate_download_url(new_url, allowed_private_origin)
-            return super().redirect_request(
-                request, file_pointer, code, message, headers, new_url
+    stream.seek(0)
+    try:
+        if path.suffix.lower() in {".jpg", ".jpeg"}:
+            if file_size < 2 or _read_exact(stream, 2) != b"\xff\xd8":
+                raise ValueError
+        else:
+            header = _read_exact(stream, 12) if file_size >= 12 else b""
+            if header[:4] != b"RIFF" or header[8:] != b"WEBP":
+                raise ValueError
+    except (EOFError, OSError, ValueError) as error:
+        expected = "JPEG" if path.suffix.lower() in {".jpg", ".jpeg"} else "WebP"
+        raise CliError(f"{label} does not match its {expected} extension: {path}") from error
+    finally:
+        stream.seek(0)
+    return None
+
+
+def _open_input_file(
+    stack: ExitStack, value: str, label: str, *, mask: bool = False
+) -> tuple[Path, BinaryIO, tuple[int, int, int] | None]:
+    path = _resolve_input_path(value, label, mask=mask)
+    size_limit = MAX_MASK_BYTES if mask else MAX_INPUT_BYTES
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+
+    try:
+        before = path.lstat()
+        if not stat.S_ISREG(before.st_mode) or (
+            reparse_flag and getattr(before, "st_file_attributes", 0) & reparse_flag
+        ):
+            raise CliError(f"{label} must be a regular file, not a link: {path}")
+
+        def opener(file: str, flags: int) -> int:
+            return os.open(file, flags | getattr(os, "O_NOFOLLOW", 0))
+
+        with open(path, "rb", opener=opener) as source:
+            opened = os.fstat(source.fileno())
+            after = path.lstat()
+            if not os.path.samestat(before, opened) or not os.path.samestat(
+                after, opened
+            ):
+                raise CliError(f"{label} changed while it was being opened: {path}")
+            if not stat.S_ISREG(opened.st_mode):
+                raise CliError(f"{label} must be a regular file: {path}")
+            if opened.st_size >= size_limit:
+                size_mb = size_limit // 1_000_000
+                raise CliError(f"{label} must be smaller than {size_mb} MB: {path}")
+
+            snapshot_wrapper = stack.enter_context(
+                tempfile.NamedTemporaryFile(
+                    mode="w+b", prefix="gpt-image-input-", suffix=path.suffix
+                )
             )
+            snapshot = snapshot_wrapper.file
+            copied_bytes = 0
+            while chunk := source.read(IO_CHUNK_BYTES):
+                copied_bytes += len(chunk)
+                if copied_bytes >= size_limit:
+                    size_mb = size_limit // 1_000_000
+                    raise CliError(
+                        f"{label} must be smaller than {size_mb} MB: {path}"
+                    )
+                snapshot.write(chunk)
+            snapshot.flush()
+            snapshot.seek(0)
+    except CliError:
+        raise
+    except OSError as error:
+        raise CliError(f"{label} is not an accessible file: {path}") from error
 
-    request = Request(url, headers={"User-Agent": "gpt-image-agent-skill/0.1"})
-    opener = build_opener(ValidatingRedirectHandler())
-    with opener.open(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
-        content_length = response.headers.get("Content-Length")
-        if content_length and int(content_length) > MAX_DOWNLOAD_BYTES:
-            raise CliError("The returned image URL exceeds the 100 MiB download limit.")
-        payload = bytearray()
-        while chunk := response.read(1024 * 1024):
-            payload.extend(chunk)
-            if len(payload) > MAX_DOWNLOAD_BYTES:
-                raise CliError("The returned image URL exceeds the 100 MiB download limit.")
-        return bytes(payload)
+    return path, snapshot, _require_image_signature(
+        snapshot, path, label, copied_bytes
+    )
 
 
 def _item_value(item: Any, name: str) -> Any:
@@ -332,11 +420,10 @@ def _item_value(item: Any, name: str) -> Any:
     return getattr(item, name, None)
 
 
-def _response_bytes(
+def _response_b64_items(
     response: Any,
-    downloader: Callable[[str], bytes],
     expected_count: int | None,
-) -> list[bytes]:
+) -> list[str | bytes]:
     items = getattr(response, "data", None)
     if not items:
         raise CliError("The API returned no image data.")
@@ -351,47 +438,81 @@ def _response_bytes(
             f"The API returned {actual_count} images; expected {expected_count}."
         )
 
-    images: list[bytes] = []
+    images: list[str | bytes] = []
     for item in items:
         encoded = _item_value(item, "b64_json")
-        if encoded:
-            try:
-                images.append(base64.b64decode(encoded, validate=True))
-            except (ValueError, TypeError) as error:
-                raise CliError("The API returned invalid base64 image data.") from error
-            continue
-        url = _item_value(item, "url")
-        if url:
-            images.append(downloader(url))
-            continue
-        raise CliError("The API response contained neither b64_json nor url image data.")
+        if not isinstance(encoded, (str, bytes)) or not encoded:
+            raise CliError("The API response must contain b64_json image data.")
+        images.append(encoded)
     return images
 
 
-def _write_outputs(paths: Sequence[Path], images: Sequence[bytes]) -> list[Path]:
-    if len(images) != len(paths):
+def _publish_staged_output(source: BinaryIO, path: Path) -> None:
+    try:
+        with path.open("xb") as destination:
+            while chunk := source.read(IO_CHUNK_BYTES):
+                destination.write(chunk)
+    except FileExistsError as error:
+        raise CliError(f"Refusing to overwrite existing output: {path}") from error
+    except KeyboardInterrupt as error:
+        raise CliError(
+            f"Publishing was interrupted; a partial file may remain at: {path}"
+        ) from error
+    except OSError as error:
+        raise CliError(
+            f"Could not publish output; a partial file may remain at: {path}"
+        ) from error
+
+
+def _write_outputs(
+    paths: Sequence[Path],
+    encoded_images: Sequence[str | bytes],
+) -> list[Path]:
+    if len(encoded_images) != len(paths):
         raise CliError("The number of output paths does not match the image data.")
 
     selected_paths = list(paths)
     _require_new_paths(selected_paths)
-    created: list[Path] = []
-    try:
-        for path, image in zip(selected_paths, images, strict=True):
-            with path.open("xb") as output_file:
-                created.append(path)
-                output_file.write(image)
-    except Exception:
-        for path in created:
-            path.unlink(missing_ok=True)
-        raise
-    return created
+    with ExitStack() as stack:
+        staged: list[tuple[BinaryIO, Path]] = []
+        for path, encoded in zip(selected_paths, encoded_images, strict=True):
+            output_file = stack.enter_context(
+                tempfile.TemporaryFile(mode="w+b")
+            )
+            staged.append((output_file, path))
+            for offset in range(0, len(encoded), BASE64_DECODE_CHUNK_CHARACTERS):
+                block = encoded[offset : offset + BASE64_DECODE_CHUNK_CHARACTERS]
+                final_block = offset + len(block) == len(encoded)
+                padding = "=" if isinstance(block, str) else b"="
+                if not final_block and padding in block:
+                    raise CliError("The API returned invalid base64 image data.")
+                try:
+                    decoded = base64.b64decode(block, validate=True)
+                except (binascii.Error, ValueError, TypeError) as error:
+                    raise CliError(
+                        "The API returned invalid base64 image data."
+                    ) from error
+                output_file.write(decoded)
+            output_file.flush()
+            output_file.seek(0)
+
+        published: list[Path] = []
+        for output_file, path in staged:
+            try:
+                _publish_staged_output(output_file, path)
+            except CliError as error:
+                detail = str(error)
+                if published:
+                    detail += "; already published: " + ", ".join(map(str, published))
+                raise CliError(detail) from error
+            published.append(path)
+    return selected_paths
 
 
 def execute(
     args: argparse.Namespace,
     *,
     client_factory: Callable[..., Any] | None = None,
-    downloader: Callable[[str], bytes] | None = None,
 ) -> list[Path]:
     api_key, base_url = _load_config()
     output_format = args.output_format or "png"
@@ -407,73 +528,80 @@ def execute(
     preflight_paths = _candidate_paths(output, expected_count or 1)
     _require_new_paths(preflight_paths)
 
-    image_paths: list[Path] = []
-    mask_path: Path | None = None
-    if args.operation == "edit":
-        if len(args.image) > MAX_INPUT_IMAGES:
-            raise CliError(f"At most {MAX_INPUT_IMAGES} input images are supported.")
-        image_paths = [_resolve_input_path(value, "Input image") for value in args.image]
-        if args.mask:
-            mask_path = _resolve_input_path(args.mask, "Mask", mask=True)
-            if image_paths[0].suffix.lower() != ".png":
+    with ExitStack() as stack:
+        opened_images: list[tuple[Path, BinaryIO, tuple[int, int, int] | None]] = []
+        opened_mask: tuple[Path, BinaryIO, tuple[int, int, int] | None] | None = None
+        if args.operation == "edit":
+            if len(args.image) > MAX_INPUT_IMAGES:
+                raise CliError(f"At most {MAX_INPUT_IMAGES} input images are supported.")
+            if args.mask and Path(args.image[0]).suffix.lower() != ".png":
                 raise CliError("The first input image must be PNG when using a mask.")
-
-    output.parent.mkdir(parents=True, exist_ok=True)
-
-    factory = client_factory or OpenAI
-    if factory is None:
-        raise CliError(
-            "The openai package is not installed. Install dependencies from requirements.txt."
-        )
-    client = factory(
-        api_key=api_key,
-        base_url=base_url,
-        max_retries=0,
-        timeout=REQUEST_TIMEOUT_SECONDS,
-    )
-    request: dict[str, Any] = {
-        "model": MODEL,
-        "prompt": args.prompt,
-    }
-    for name in (
-        "size",
-        "quality",
-        "output_format",
-        "output_compression",
-        "background",
-        "n",
-    ):
-        value = getattr(args, name)
-        if value is not None:
-            request[name] = value
-
-    if args.operation == "generate":
-        if args.moderation is not None:
-            request["moderation"] = args.moderation
-        response = client.images.generate(**request)
-    else:
-        if args.moderation is not None:
-            request["extra_body"] = {"moderation": args.moderation}
-        with ExitStack() as stack:
-            request["image"] = [
-                stack.enter_context(path.open("rb")) for path in image_paths
+            opened_images = [
+                _open_input_file(stack, value, "Input image") for value in args.image
             ]
-            if mask_path is not None:
-                request["mask"] = stack.enter_context(mask_path.open("rb"))
+            if args.mask:
+                opened_mask = _open_input_file(stack, args.mask, "Mask", mask=True)
+                first_info = opened_images[0][2]
+                mask_info = opened_mask[2]
+                assert first_info is not None and mask_info is not None
+                if first_info[:2] != mask_info[:2]:
+                    raise CliError(
+                        "The mask and first input image must have matching dimensions."
+                    )
+                if mask_info[2] not in {4, 6}:
+                    raise CliError("The mask must contain an alpha channel.")
+
+        output.parent.mkdir(parents=True, exist_ok=True)
+
+        client_kwargs = {
+            "api_key": api_key,
+            "base_url": base_url,
+            "max_retries": 0,
+            "timeout": REQUEST_TIMEOUT_SECONDS,
+        }
+        if client_factory is None:
+            if OpenAI is None or DefaultHttpxClient is None:
+                raise CliError(
+                    "The openai package is not installed. "
+                    "Install dependencies from requirements.txt."
+                )
+            http_client = stack.enter_context(
+                DefaultHttpxClient(follow_redirects=False)
+            )
+            client = OpenAI(**client_kwargs, http_client=http_client)
+        else:
+            client = client_factory(**client_kwargs)
+        request: dict[str, Any] = {
+            "model": MODEL,
+            "prompt": args.prompt,
+        }
+        for name in (
+            "size",
+            "quality",
+            "output_format",
+            "output_compression",
+            "background",
+            "n",
+        ):
+            value = getattr(args, name)
+            if value is not None:
+                request[name] = value
+
+        if args.operation == "generate":
+            if args.moderation is not None:
+                request["moderation"] = args.moderation
+            response = client.images.generate(**request)
+        else:
+            if args.moderation is not None:
+                request["extra_body"] = {"moderation": args.moderation}
+            request["image"] = [opened[1] for opened in opened_images]
+            if opened_mask is not None:
+                request["mask"] = opened_mask[1]
             response = client.images.edit(**request)
 
-    if downloader is None:
-        parsed_base_url = urlsplit(base_url)
-        assert parsed_base_url.hostname is not None
-        private_origin = (
-            parsed_base_url.hostname,
-            parsed_base_url.port
-            or (443 if parsed_base_url.scheme == "https" else 80),
-        )
-        downloader = lambda url: _download_url(url, private_origin)
-    images = _response_bytes(response, downloader, expected_count)
-    candidates = _candidate_paths(output, len(images))
-    return _write_outputs(candidates, images)
+    encoded_images = _response_b64_items(response, expected_count)
+    candidates = _candidate_paths(output, len(encoded_images))
+    return _write_outputs(candidates, encoded_images)
 
 
 def _sanitize_error(message: str) -> str:
