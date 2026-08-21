@@ -246,6 +246,25 @@ class ImageGenTests(unittest.TestCase):
             },
         )
 
+    def test_transparent_png_is_forwarded_for_generate(self):
+        factory = FakeFactory()
+        with tempfile.TemporaryDirectory() as directory, self.env():
+            cli.execute(
+                self.parse(
+                    "generate",
+                    "--prompt",
+                    "draw a reusable product cutout",
+                    "--background",
+                    "transparent",
+                    "--out",
+                    str(Path(directory) / "cutout.png"),
+                ),
+                client_factory=factory,
+            )
+
+        self.assertEqual(factory.generate_kwargs["background"], "transparent")
+        self.assertNotIn("output_format", factory.generate_kwargs)
+
     def test_edit_passes_multiple_images_and_mask_without_input_fidelity(self):
         factory = FakeFactory()
         with tempfile.TemporaryDirectory() as directory, self.env():
@@ -272,6 +291,8 @@ class ImageGenTests(unittest.TestCase):
                     "webp",
                     "--output-compression",
                     "80",
+                    "--background",
+                    "transparent",
                     "--moderation",
                     "low",
                     "--out",
@@ -286,6 +307,7 @@ class ImageGenTests(unittest.TestCase):
             )
             self.assertEqual(factory.edit_kwargs["mask"].suffix, ".png")
             self.assertEqual(factory.edit_kwargs["output_compression"], 80)
+            self.assertEqual(factory.edit_kwargs["background"], "transparent")
             self.assertEqual(factory.edit_kwargs["extra_body"], {"moderation": "low"})
             self.assertNotIn("moderation", factory.edit_kwargs)
             self.assertNotIn("input_fidelity", factory.edit_kwargs)
@@ -410,6 +432,28 @@ class ImageGenTests(unittest.TestCase):
                         "50",
                         "--out",
                         str(Path(directory) / "out.png"),
+                    ),
+                    client_factory=factory,
+                )
+        self.assertIsNone(factory.init_kwargs)
+
+    def test_transparent_jpeg_is_rejected_before_api_call(self):
+        factory = FakeFactory()
+        with tempfile.TemporaryDirectory() as directory, self.env():
+            with self.assertRaisesRegex(
+                cli.CliError, "transparent requires --output-format png or webp"
+            ):
+                cli.execute(
+                    self.parse(
+                        "generate",
+                        "--prompt",
+                        "test",
+                        "--background",
+                        "transparent",
+                        "--output-format",
+                        "jpeg",
+                        "--out",
+                        str(Path(directory) / "out.jpeg"),
                     ),
                     client_factory=factory,
                 )

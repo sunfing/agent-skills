@@ -41,11 +41,13 @@ Pass user-requested supported options when present:
 - `--quality auto|low|medium|high`
 - `--output-format png|jpeg|webp`
 - `--output-compression 0..100` for JPEG or WebP only
-- `--background auto|opaque`
+- `--background auto|opaque|transparent`
 - `--moderation auto|low`
 - `--n <1..10>`
 
 Do not pass `--n` for a single-image request. Pass it only when the user explicitly requests more than one image. When `--n` is omitted, accept, save, embed, and report every image returned by the API, up to the CLI limit of 10.
+
+When the user requests a transparent background, pass `--background transparent`. Leave the output format unset for the default PNG, or pass `--output-format webp` when the user requests WebP. Never combine a transparent background with JPEG. Transparent background support for `gpt-image-2` is in preview; if the configured relay rejects it, report the error and stop without retrying with an opaque background.
 
 When the user does not explicitly provide an output path, omit `--out` entirely and let the CLI select the platform Pictures directory and a collision-resistant filename. Never invent an output path or filename, and never default to the task directory, workspace, current working directory, or an `outputs` directory. Never add `--force`; the CLI refuses to overwrite existing files.
 
@@ -54,7 +56,6 @@ When the user does not explicitly provide an output path, omit `--out` entirely 
 - Use only the fixed API model `gpt-image-2` through `/v1/images/generations` or `/v1/images/edits`.
 - Accept only inline `b64_json` image data returned by the Image API; do not download provider-returned URLs.
 - Do not pass `input_fidelity`; `gpt-image-2` always processes image inputs at high fidelity.
-- Do not request transparent backgrounds; `gpt-image-2` supports only `auto` and `opaque` backgrounds.
 - Do not use Responses, streaming partial images, Batch, video, audio, or non-OpenAI image models.
 - A mask is optional and applies to the first input image. Require both the mask and first input to be PNG with matching dimensions; the mask must contain an alpha channel.
 - Accept at most 16 PNG, JPEG, or WebP input images, each smaller than 50 MB. Require a PNG mask smaller than 50 MB.

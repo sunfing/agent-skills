@@ -111,7 +111,9 @@ def build_parser() -> argparse.ArgumentParser:
             "--output-format", choices=("png", "jpeg", "webp")
         )
         command.add_argument("--output-compression", type=_compression)
-        command.add_argument("--background", choices=("auto", "opaque"))
+        command.add_argument(
+            "--background", choices=("auto", "opaque", "transparent")
+        )
         command.add_argument("--moderation", choices=("auto", "low"))
         command.add_argument("--n", type=_image_count)
 
@@ -523,6 +525,10 @@ def execute(
         )
     if args.output_compression is not None and output_format == "png":
         raise CliError("--output-compression is supported only for jpeg or webp.")
+    if args.background == "transparent" and output_format == "jpeg":
+        raise CliError(
+            "--background transparent requires --output-format png or webp."
+        )
 
     output = _resolve_output_path(args.out, output_format)
     preflight_paths = _candidate_paths(output, expected_count or 1)

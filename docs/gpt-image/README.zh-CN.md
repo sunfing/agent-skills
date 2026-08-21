@@ -15,13 +15,13 @@
 - `gpt-image-2` 接受的合规尺寸
 - `auto`、`low`、`medium`、`high` 质量
 - PNG、JPEG、WebP 输出及 JPEG/WebP 压缩
-- `auto`/`opaque` 背景与 `auto`/`low` moderation
+- `auto`、`opaque` 或 preview `transparent` 背景与 `auto`/`low` moderation
 - 默认保存到系统 Pictures 目录，并生成不冲突的文件名
 - 每次 CLI 调用只发送一次付费 Image API 请求，并关闭 SDK 自动重试
 
 每次编辑最多接受 16 张 PNG、JPEG 或 WebP 输入图，每张小于 50 MB。使用 mask 时，mask 和第一张输入图都必须是尺寸一致的 PNG，且 mask 必须包含 alpha channel。prompt 最长 32,000 个字符。
 
-`gpt-image-2` 不支持透明背景。本 Skill 也不使用 Responses、partial-image streaming、Batch、视频、音频或自动模型 fallback。
+`gpt-image-2` 已以 preview 形式支持透明背景，输出格式只能使用 PNG 或 WebP，不能使用 JPEG。OpenAI-compatible 中转站在同步该上游能力前可能拒绝这个 preview 参数；本 Skill 会原样报告错误，不会自动重试为不透明背景。本 Skill 也不使用 Responses、partial-image streaming、Batch、视频、音频或自动模型 fallback。
 
 ## 使用条件
 
@@ -249,6 +249,12 @@ $gpt-image 生成一只戴宇航员头盔的橘猫，像素插画风格，纯蓝
 $gpt-image 生成一张灰色影棚背景上的白色陶瓷杯产品照片。
 ```
 
+生成可复用的透明背景素材：
+
+```text
+$gpt-image 生成一张透明背景的白色陶瓷杯产品照片，以 PNG 输出。
+```
+
 ### 自然语言编辑
 
 附加或明确指定现有图片，然后提出：
@@ -266,6 +272,16 @@ python "/path/to/gpt-image/scripts/image_gen.py" generate \
   --quality medium \
   --output-format png \
   --out output.png
+```
+
+透明背景 preview：
+
+```shell
+python "/path/to/gpt-image/scripts/image_gen.py" generate \
+  --prompt "A white ceramic mug product cutout" \
+  --background transparent \
+  --output-format png \
+  --out mug-cutout.png
 ```
 
 ### CLI 图片编辑

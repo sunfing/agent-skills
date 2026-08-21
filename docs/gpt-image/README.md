@@ -15,13 +15,13 @@ This project is not affiliated with OpenAI. It does not provide an API service, 
 - Supported sizes accepted by `gpt-image-2`
 - `auto`, `low`, `medium`, and `high` quality
 - PNG, JPEG, and WebP output, including JPEG/WebP compression
-- `auto` or `opaque` backgrounds and `auto` or `low` moderation
+- `auto`, `opaque`, or preview `transparent` backgrounds and `auto` or `low` moderation
 - Platform Pictures directory defaults with collision-safe filenames
 - Exactly one paid Image API request per CLI invocation, with SDK retries disabled
 
 Each edit accepts at most 16 PNG, JPEG, or WebP input images under 50 MB each. With a mask, the mask and first input must both be PNG files with matching dimensions, and the mask must contain an alpha channel. Prompts are limited to 32,000 characters.
 
-`gpt-image-2` does not support transparent backgrounds. This Skill does not use Responses, partial-image streaming, Batch, video, audio, or automatic model fallback.
+Transparent backgrounds are available in preview for `gpt-image-2` with PNG or WebP output; JPEG is not supported for transparent output. An OpenAI-compatible relay may reject this preview parameter until it implements the upstream capability. The Skill reports that error without retrying with an opaque background. This Skill does not use Responses, partial-image streaming, Batch, video, audio, or automatic model fallback.
 
 ## Requirements
 
@@ -249,6 +249,12 @@ This sends one paid Image API request. On success, the Agent should embed the ge
 $gpt-image Generate a product photo of a white ceramic mug on a gray studio background.
 ```
 
+For a reusable cutout with transparency:
+
+```text
+$gpt-image Generate a product photo of a white ceramic mug with a transparent background as a PNG.
+```
+
 ### Natural-language editing
 
 Attach or identify an existing image, then ask:
@@ -266,6 +272,16 @@ python "/path/to/gpt-image/scripts/image_gen.py" generate \
   --quality medium \
   --output-format png \
   --out output.png
+```
+
+Transparent background preview:
+
+```shell
+python "/path/to/gpt-image/scripts/image_gen.py" generate \
+  --prompt "A white ceramic mug product cutout" \
+  --background transparent \
+  --output-format png \
+  --out mug-cutout.png
 ```
 
 ### Direct CLI editing
