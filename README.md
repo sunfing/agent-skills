@@ -12,7 +12,7 @@ This repository and its Skills are not affiliated with OpenAI, Anthropic, or any
 
 | Skill | Purpose | Documentation |
 | --- | --- | --- |
-| [`gpt-image`](skills/gpt-image/) | Generate and edit bitmap images with the fixed `gpt-image-2` model through a user-configured OpenAI-compatible Image API. | [English](docs/gpt-image/README.md) · [简体中文](docs/gpt-image/README.zh-CN.md) |
+| [`gpt-image`](skills/gpt-image/) | Generate, edit, and request multiple bitmap variants with the fixed `gpt-image-2` model through a user-configured OpenAI-compatible Image API, including relay-compatible fanout and reference-image format normalization. | [English](docs/gpt-image/README.md) · [简体中文](docs/gpt-image/README.zh-CN.md) |
 
 ## Install with CC Switch
 

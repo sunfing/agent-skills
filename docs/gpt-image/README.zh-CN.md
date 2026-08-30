@@ -11,15 +11,18 @@
 - 文本生成图片
 - 单图编辑与多参考图编辑
 - PNG mask / inpainting
-- 单次请求生成 `1..10` 张图片
+- 一次 CLI 调用生成 `1..10` 张图片，默认使用兼容中转站的 fanout
 - `gpt-image-2` 接受的合规尺寸
 - `auto`、`low`、`medium`、`high` 质量
 - PNG、JPEG、WebP 输出及 JPEG/WebP 压缩
 - `auto`、`opaque` 或 preview `transparent` 背景与 `auto`/`low` moderation
 - 默认保存到系统 Pictures 目录，并生成不冲突的文件名
-- 每次 CLI 调用只发送一次付费 Image API 请求，并关闭 SDK 自动重试
+- 按文件内容识别 PNG、JPEG、WebP 参考图，扩展名缺失或错误时使用内容不变的临时上传快照
+- 支持 native 或有界并发 fanout 多图请求，并关闭 SDK 自动重试
 
-每次编辑最多接受 16 张 PNG、JPEG 或 WebP 输入图，每张小于 50 MB。使用 mask 时，mask 和第一张输入图都必须是尺寸一致的 PNG，且 mask 必须包含 alpha channel。prompt 最长 32,000 个字符。
+每次编辑最多接受 16 张 PNG、JPEG 或 WebP 输入图，每张小于 50 MB。输入格式根据文件内容而非文件名识别。受支持文件缺少扩展名或扩展名错误时，Skill 会用正确 suffix 和 MIME type 创建内容不变的临时上传快照，不修改或重新编码原图。BMP、TIFF、GIF、HEIC、AVIF 等不支持格式不会自动转换。
+
+使用 mask 时，mask 和第一张输入图都必须包含尺寸一致的 PNG 数据，且 mask 必须包含 alpha channel。mask 不会自动转换或缩放。prompt 最长 32,000 个字符。
 
 `gpt-image-2` 已以 preview 形式支持透明背景，输出格式只能使用 PNG 或 WebP，不能使用 JPEG。OpenAI-compatible 中转站在同步该上游能力前可能拒绝这个 preview 参数；本 Skill 会原样报告错误，不会自动重试为不透明背景。本 Skill 也不使用 Responses、partial-image streaming、Batch、视频、音频或自动模型 fallback。
 
@@ -142,6 +145,17 @@ python3 -m pip install -r ~/.codex/skills/gpt-image/requirements.txt
 
 不要把凭据写入本仓库、`SKILL.md` 或 prompt。
 
+### 可选的多图模式
+
+`GPT_IMAGE_MULTI_MODE` 是可选配置，默认值为 `fanout`，用于兼容拒绝 Image API `n` 参数的中转站，因此绝大多数用户不需要设置它。
+
+| 值 | 行为 |
+| --- | --- |
+| `fanout` | 默认值。使用 `--n N` 时，一个 CLI 进程发送 N 个有界并发单图请求，每个请求都省略 `n`。 |
+| `native` | 只发送一个带 `n=N` 的 Image API 请求。仅在确认 provider 支持 `n` 时使用。 |
+
+`--multi-mode native|fanout` 可为单次命令覆盖环境变量。Skill 不会自动重试失败请求，也不会在失败后切换模式。
+
 ### Windows PowerShell：持久用户变量
 
 以下流程会隐藏 key，避免它以明文形式进入 PowerShell 命令历史：
@@ -255,6 +269,14 @@ $gpt-image 生成一张灰色影棚背景上的白色陶瓷杯产品照片。
 $gpt-image 生成一张透明背景的白色陶瓷杯产品照片，以 PNG 输出。
 ```
 
+一次请求多个版本：
+
+```text
+$gpt-image 生成 4 个灰色影棚背景上的白色陶瓷杯视觉版本。
+```
+
+用户明确给出的数量即授权生成对应数量的付费输出。默认 `fanout` 模式下，4 张输出表示在一个 CLI 进程内发送 4 个 Image API 请求。
+
 ### 自然语言编辑
 
 附加或明确指定现有图片，然后提出：
@@ -284,6 +306,25 @@ python "/path/to/gpt-image/scripts/image_gen.py" generate \
   --out mug-cutout.png
 ```
 
+使用默认的中转站兼容模式生成多张：
+
+```shell
+python "/path/to/gpt-image/scripts/image_gen.py" generate \
+  --prompt "Four visual variants of a white ceramic mug" \
+  --n 4
+```
+
+仅在确认 provider 支持 `n` 时使用 native 多图模式：
+
+```shell
+python "/path/to/gpt-image/scripts/image_gen.py" generate \
+  --prompt "Four visual variants of a white ceramic mug" \
+  --n 4 \
+  --multi-mode native
+```
+
+fanout 最多同时执行 4 个请求，每个请求都省略 `n`；它不会自动重试，也不会 fallback 到另一模式。只有部分请求成功时，已成功的输出文件会被保留并报告，同时列出失败请求详情。
+
 ### CLI 图片编辑
 
 ```shell
@@ -303,7 +344,9 @@ python "/path/to/gpt-image/scripts/image_gen.py" edit \
   --out combined.png
 ```
 
-进行 inpainting 时增加 `--mask mask.png`。第一张输入图和 mask 必须是相同尺寸的 PNG，且 mask 必须包含 alpha channel。
+PNG、JPEG、WebP 参考图按文件内容识别。扩展名缺失或错误时，只会规范化临时上传快照；原始字节和原文件保持不变。Skill 不会自动转换 BMP、TIFF、GIF、HEIC、AVIF 等不支持格式。
+
+进行 inpainting 时增加 `--mask mask.png`。第一张输入图和 mask 必须包含相同尺寸的 PNG 数据，且 mask 必须包含 alpha channel。mask 不会自动转换或缩放。
 
 未提供 `--out` 时，Skill 会保存到系统 Pictures 目录，文件名格式为 `yyyyMMdd-HHmmss-fff-<uuid>`。已有文件不会被覆盖。
 
@@ -339,6 +382,8 @@ Agent 进程没有获得 `GPT_IMAGE_API_KEY`。确认变量已经设置，然后
 ### 中转站拒绝生成或编辑请求
 
 确认中转站在 `/v1/images/generations` 和 `/v1/images/edits` 上都支持 `gpt-image-2`。仅兼容 Chat Completions 或 Responses 不能证明它兼容 Image API。
+
+如果多图请求出现 `Unknown parameter: 'tools[0].n'.` 或其他拒绝 `n` 的错误，请使用默认 `fanout`。删除 `GPT_IMAGE_MULTI_MODE=native` 覆盖值，或传入 `--multi-mode fanout`；默认模式不要求设置任何环境变量。
 
 ### 安装管理方式冲突
 

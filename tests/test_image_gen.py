@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import argparse
 import base64
-from contextlib import ExitStack, nullcontext, redirect_stderr
+from contextlib import ExitStack, nullcontext, redirect_stderr, redirect_stdout
 import importlib.util
 import io
 import os
 from pathlib import Path
 import re
 import struct
+import threading
 from types import SimpleNamespace
 import tempfile
 import unittest
@@ -108,22 +109,30 @@ class FakeFactory:
         self.init_kwargs = None
         self.generate_kwargs = None
         self.edit_kwargs = None
+        self.generate_calls = []
+        self.edit_calls = []
+        self.calls_lock = threading.Lock()
 
     def __call__(self, **kwargs):
         self.init_kwargs = kwargs
         return SimpleNamespace(images=self)
 
     def generate(self, **kwargs):
-        self.generate_kwargs = kwargs
+        with self.calls_lock:
+            self.generate_kwargs = kwargs
+            self.generate_calls.append(kwargs)
         if self.error:
             raise self.error
         return self.response
 
     def edit(self, **kwargs):
-        self.edit_kwargs = dict(kwargs)
-        self.edit_kwargs["image"] = [Path(handle.name) for handle in kwargs["image"]]
+        captured = dict(kwargs)
+        captured["image"] = [Path(handle.name) for handle in kwargs["image"]]
         if "mask" in kwargs:
-            self.edit_kwargs["mask"] = Path(kwargs["mask"].name)
+            captured["mask"] = Path(kwargs["mask"].name)
+        with self.calls_lock:
+            self.edit_kwargs = captured
+            self.edit_calls.append(captured)
         if self.error:
             raise self.error
         return self.response
@@ -313,6 +322,48 @@ class ImageGenTests(unittest.TestCase):
             self.assertNotIn("input_fidelity", factory.edit_kwargs)
             self.assertIsNone(factory.generate_kwargs)
 
+    def test_fanout_edit_reopens_validated_snapshots_for_each_request(self):
+        class ReadingFactory(FakeFactory):
+            def __init__(self):
+                super().__init__()
+                self.uploaded_images = []
+
+            def edit(self, **kwargs):
+                uploaded = [handle.read() for handle in kwargs["image"]]
+                for handle in kwargs["image"]:
+                    handle.seek(0)
+                with self.calls_lock:
+                    self.uploaded_images.append(uploaded)
+                return super().edit(**kwargs)
+
+        factory = ReadingFactory()
+        with tempfile.TemporaryDirectory() as directory, self.env():
+            root = Path(directory)
+            image = root / "reference.png"
+            image.write_bytes(PNG_BYTES)
+            paths = cli.execute(
+                self.parse(
+                    "edit",
+                    "--prompt",
+                    "two edits",
+                    "--image",
+                    str(image),
+                    "--n",
+                    "2",
+                    "--out",
+                    str(root / "edited.png"),
+                ),
+                client_factory=factory,
+            )
+
+        self.assertEqual(len(paths), 2)
+        self.assertEqual(len(factory.edit_calls), 2)
+        self.assertEqual(factory.uploaded_images, [[PNG_BYTES], [PNG_BYTES]])
+        self.assertTrue(all("n" not in call for call in factory.edit_calls))
+        self.assertTrue(
+            all(call["image"][0].suffix == ".png" for call in factory.edit_calls)
+        )
+
     def test_refuses_overwrite_before_creating_client(self):
         factory = FakeFactory()
         with tempfile.TemporaryDirectory() as directory, self.env():
@@ -328,7 +379,7 @@ class ImageGenTests(unittest.TestCase):
             self.assertIsNone(factory.init_kwargs)
             self.assertEqual(output.read_bytes(), b"existing")
 
-    def test_multiple_outputs_use_numbered_names(self):
+    def test_native_multiple_outputs_use_one_request_with_n(self):
         response = SimpleNamespace(
             data=[
                 {"b64_json": base64.b64encode(b"one").decode()},
@@ -345,6 +396,8 @@ class ImageGenTests(unittest.TestCase):
                     "two images",
                     "--n",
                     "2",
+                    "--multi-mode",
+                    "native",
                     "--out",
                     str(output),
                 ),
@@ -353,7 +406,176 @@ class ImageGenTests(unittest.TestCase):
             self.assertEqual([path.name for path in paths], ["result-1.png", "result-2.png"])
             self.assertEqual(paths[0].read_bytes(), b"one")
             self.assertEqual(paths[1].read_bytes(), b"two")
+            self.assertEqual(len(factory.generate_calls), 1)
             self.assertEqual(factory.generate_kwargs["n"], 2)
+
+    def test_default_fanout_uses_numbered_names_and_omits_n(self):
+        factory = FakeFactory()
+        with tempfile.TemporaryDirectory() as directory, self.env():
+            output = Path(directory) / "result.png"
+            paths = cli.execute(
+                self.parse(
+                    "generate",
+                    "--prompt",
+                    "two images",
+                    "--n",
+                    "2",
+                    "--out",
+                    str(output),
+                ),
+                client_factory=factory,
+            )
+
+            self.assertEqual(
+                [path.name for path in paths], ["result-1.png", "result-2.png"]
+            )
+            self.assertTrue(all(path.read_bytes() == PNG_BYTES for path in paths))
+            self.assertEqual(len(factory.generate_calls), 2)
+            self.assertTrue(all("n" not in call for call in factory.generate_calls))
+
+    def test_environment_selects_native_and_cli_can_override_it(self):
+        native_response = SimpleNamespace(
+            data=[
+                {"b64_json": base64.b64encode(b"one").decode()},
+                {"b64_json": base64.b64encode(b"two").decode()},
+            ]
+        )
+        with tempfile.TemporaryDirectory() as directory, self.env(), patch.dict(
+            os.environ, {cli.MULTI_MODE_ENV: "native"}
+        ):
+            root = Path(directory)
+            native_factory = FakeFactory(response=native_response)
+            cli.execute(
+                self.parse(
+                    "generate",
+                    "--prompt",
+                    "two native images",
+                    "--n",
+                    "2",
+                    "--out",
+                    str(root / "native.png"),
+                ),
+                client_factory=native_factory,
+            )
+            fanout_factory = FakeFactory()
+            cli.execute(
+                self.parse(
+                    "generate",
+                    "--prompt",
+                    "two fanout images",
+                    "--n",
+                    "2",
+                    "--multi-mode",
+                    "fanout",
+                    "--out",
+                    str(root / "fanout.png"),
+                ),
+                client_factory=fanout_factory,
+            )
+
+        self.assertEqual(len(native_factory.generate_calls), 1)
+        self.assertEqual(native_factory.generate_calls[0]["n"], 2)
+        self.assertEqual(len(fanout_factory.generate_calls), 2)
+        self.assertTrue(all("n" not in call for call in fanout_factory.generate_calls))
+
+    def test_invalid_multi_mode_is_rejected_before_client_creation(self):
+        factory = FakeFactory()
+        with tempfile.TemporaryDirectory() as directory, self.env(), patch.dict(
+            os.environ, {cli.MULTI_MODE_ENV: "unsupported"}
+        ):
+            with self.assertRaisesRegex(cli.CliError, "must be one of: fanout, native"):
+                cli.execute(
+                    self.parse(
+                        "generate",
+                        "--prompt",
+                        "two images",
+                        "--n",
+                        "2",
+                        "--out",
+                        str(Path(directory) / "result.png"),
+                    ),
+                    client_factory=factory,
+                )
+        self.assertIsNone(factory.init_kwargs)
+
+    def test_fanout_limits_workers_to_four(self):
+        factory = FakeFactory()
+        observed_workers = []
+        real_executor = cli.ThreadPoolExecutor
+
+        def tracked_executor(*args, **kwargs):
+            observed_workers.append(kwargs.get("max_workers", args[0] if args else None))
+            return real_executor(*args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory, self.env(), patch.object(
+            cli, "ThreadPoolExecutor", tracked_executor
+        ):
+            cli.execute(
+                self.parse(
+                    "generate",
+                    "--prompt",
+                    "ten images",
+                    "--n",
+                    "10",
+                    "--out",
+                    str(Path(directory) / "result.png"),
+                ),
+                client_factory=factory,
+            )
+
+        self.assertEqual(observed_workers, [4])
+        self.assertEqual(len(factory.generate_calls), 10)
+
+    def test_fanout_partial_failure_preserves_success_without_retry(self):
+        class PartiallyFailingFactory(FakeFactory):
+            def generate(self, **kwargs):
+                with self.calls_lock:
+                    self.generate_kwargs = kwargs
+                    self.generate_calls.append(kwargs)
+                    call_number = len(self.generate_calls)
+                if call_number == 2:
+                    raise RuntimeError("simulated relay failure")
+                return self.response
+
+        factory = PartiallyFailingFactory()
+        with tempfile.TemporaryDirectory() as directory, self.env():
+            output = Path(directory) / "result.png"
+            with self.assertRaisesRegex(
+                cli.PartialFailureError,
+                "Fanout completed with 1 of 2 images.*simulated relay failure",
+            ) as caught:
+                cli.execute(
+                    self.parse(
+                        "generate",
+                        "--prompt",
+                        "two images",
+                        "--n",
+                        "2",
+                        "--out",
+                        str(output),
+                    ),
+                    client_factory=factory,
+                )
+
+            self.assertEqual(len(caught.exception.paths), 1)
+            self.assertEqual(caught.exception.paths[0].read_bytes(), PNG_BYTES)
+            self.assertEqual(len(factory.generate_calls), 2)
+            self.assertTrue(all("n" not in call for call in factory.generate_calls))
+
+    def test_main_reports_fanout_partial_outputs_and_error(self):
+        output = Path("partial.png").resolve()
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch.object(
+            cli,
+            "execute",
+            side_effect=cli.PartialFailureError("one request failed", [output]),
+        ), redirect_stdout(stdout), redirect_stderr(stderr):
+            code = cli.main(["generate", "--prompt", "two images", "--n", "2"])
+
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout.getvalue().strip(), f"OUTPUT={output}")
+        self.assertIn("error: one request failed", stderr.getvalue())
 
     def test_unspecified_count_saves_all_returned_images(self):
         response = SimpleNamespace(
@@ -742,13 +964,41 @@ class ImageGenTests(unittest.TestCase):
                 cli.execute(self.parse(*arguments), client_factory=factory)
         self.assertIsNone(factory.init_kwargs)
 
-    def test_mask_requires_png_first_input(self):
+    def test_mask_accepts_png_content_with_incorrect_extensions(self):
         factory = FakeFactory()
         with tempfile.TemporaryDirectory() as directory, self.env():
             root = Path(directory)
             image = root / "input.jpg"
-            mask = root / "mask.png"
+            mask = root / "mask.bin"
             image.write_bytes(PNG_BYTES)
+            mask.write_bytes(PNG_BYTES)
+            cli.execute(
+                self.parse(
+                    "edit",
+                    "--prompt",
+                    "test",
+                    "--image",
+                    str(image),
+                    "--mask",
+                    str(mask),
+                    "--out",
+                    str(root / "out.png"),
+                ),
+                client_factory=factory,
+            )
+
+            self.assertEqual(factory.edit_kwargs["image"][0].suffix, ".png")
+            self.assertEqual(factory.edit_kwargs["mask"].suffix, ".png")
+            self.assertEqual(image.read_bytes(), PNG_BYTES)
+            self.assertEqual(mask.read_bytes(), PNG_BYTES)
+
+    def test_mask_rejects_non_png_content_before_client_creation(self):
+        factory = FakeFactory()
+        with tempfile.TemporaryDirectory() as directory, self.env():
+            root = Path(directory)
+            image = root / "input.png"
+            mask = root / "mask.png"
+            image.write_bytes(JPEG_BYTES)
             mask.write_bytes(PNG_BYTES)
             with self.assertRaisesRegex(cli.CliError, "first input image must be PNG"):
                 cli.execute(
@@ -838,7 +1088,7 @@ class ImageGenTests(unittest.TestCase):
                 )
         self.assertIsNone(factory.init_kwargs)
 
-    def test_extension_signature_mismatch_is_rejected_before_client(self):
+    def test_unsupported_image_content_is_rejected_before_client(self):
         invalid_inputs = (
             ("input.jpg", b"not a JPEG"),
             ("input.webp", b"not a WebP"),
@@ -864,6 +1114,43 @@ class ImageGenTests(unittest.TestCase):
                         client_factory=factory,
                     )
                 self.assertIsNone(factory.init_kwargs)
+
+    def test_supported_content_with_wrong_or_missing_extension_is_normalized(self):
+        class ReadingFactory(FakeFactory):
+            uploaded = None
+
+            def edit(self, **kwargs):
+                self.uploaded = kwargs["image"][0].read()
+                kwargs["image"][0].seek(0)
+                return super().edit(**kwargs)
+
+        valid_inputs = (
+            ("png-as-jpeg.jpg", PNG_BYTES, ".png"),
+            ("jpeg-as-png.png", JPEG_BYTES, ".jpg"),
+            ("webp-without-extension", WEBP_BYTES, ".webp"),
+        )
+        for name, payload, expected_suffix in valid_inputs:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory, self.env():
+                root = Path(directory)
+                image = root / name
+                image.write_bytes(payload)
+                factory = ReadingFactory()
+                cli.execute(
+                    self.parse(
+                        "edit",
+                        "--prompt",
+                        "test",
+                        "--image",
+                        str(image),
+                        "--out",
+                        str(root / "out.png"),
+                    ),
+                    client_factory=factory,
+                )
+
+                self.assertEqual(factory.uploaded, payload)
+                self.assertEqual(factory.edit_kwargs["image"][0].suffix, expected_suffix)
+                self.assertEqual(image.read_bytes(), payload)
 
     def test_matching_jpeg_webp_and_png_signatures_are_accepted(self):
         valid_inputs = (
@@ -1137,7 +1424,7 @@ class ImageGenTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory, self.env():
             root = Path(directory)
-            image = root / "input.png"
+            image = root / "input.jpg"
             mask = root / "mask.png"
             image.write_bytes(PNG_BYTES)
             mask.write_bytes(PNG_BYTES)
@@ -1166,6 +1453,8 @@ class ImageGenTests(unittest.TestCase):
         self.assertIn(b"gpt-image-2", body)
         self.assertIn(b'name="moderation"', body)
         self.assertIn(b"low", body)
+        self.assertIn(b"Content-Type: image/png", body)
+        self.assertNotIn(b"Content-Type: image/jpeg", body)
 
     def test_real_sdk_does_not_retry_server_error(self):
         request_count = 0

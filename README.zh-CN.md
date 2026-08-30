@@ -12,7 +12,7 @@
 
 | Skill | 用途 | 文档 |
 | --- | --- | --- |
-| [`gpt-image`](skills/gpt-image/) | 通过用户配置的 OpenAI-compatible Image API，使用固定模型 `gpt-image-2` 生成或编辑位图。 | [English](docs/gpt-image/README.md) · [简体中文](docs/gpt-image/README.zh-CN.md) |
+| [`gpt-image`](skills/gpt-image/) | 通过用户配置的 OpenAI-compatible Image API，使用固定模型 `gpt-image-2` 生成、编辑或一次请求多个位图版本，并支持中转站兼容的 fanout 与参考图格式规范化。 | [English](docs/gpt-image/README.md) · [简体中文](docs/gpt-image/README.zh-CN.md) |
 
 ## 使用 CC Switch 安装
 

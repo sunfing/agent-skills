@@ -11,15 +11,18 @@ This project is not affiliated with OpenAI. It does not provide an API service, 
 - Text-to-image generation
 - Single-image and multi-reference editing
 - PNG masks / inpainting
-- `1..10` outputs per request
+- `1..10` outputs in one CLI invocation, using relay-compatible fanout by default
 - Supported sizes accepted by `gpt-image-2`
 - `auto`, `low`, `medium`, and `high` quality
 - PNG, JPEG, and WebP output, including JPEG/WebP compression
 - `auto`, `opaque`, or preview `transparent` backgrounds and `auto` or `low` moderation
 - Platform Pictures directory defaults with collision-safe filenames
-- Exactly one paid Image API request per CLI invocation, with SDK retries disabled
+- Content-based PNG, JPEG, and WebP reference detection with unchanged temporary upload snapshots when extensions are missing or incorrect
+- Native or bounded-concurrency fanout multi-image requests, with SDK retries disabled
 
-Each edit accepts at most 16 PNG, JPEG, or WebP input images under 50 MB each. With a mask, the mask and first input must both be PNG files with matching dimensions, and the mask must contain an alpha channel. Prompts are limited to 32,000 characters.
+Each edit accepts at most 16 PNG, JPEG, or WebP input images under 50 MB each. Input format is detected from file content rather than the filename. A supported file with a missing or incorrect extension is uploaded from an unchanged temporary snapshot with the correct suffix and MIME type; the original is not modified or re-encoded. Unsupported formats such as BMP, TIFF, GIF, HEIC, and AVIF are not automatically converted.
+
+With a mask, the mask and first input must both contain PNG data with matching dimensions, and the mask must contain an alpha channel. Masks are not converted or resized. Prompts are limited to 32,000 characters.
 
 Transparent backgrounds are available in preview for `gpt-image-2` with PNG or WebP output; JPEG is not supported for transparent output. An OpenAI-compatible relay may reject this preview parameter until it implements the upstream capability. The Skill reports that error without retrying with an opaque background. This Skill does not use Responses, partial-image streaming, Batch, video, audio, or automatic model fallback.
 
@@ -142,6 +145,17 @@ The Skill reads credentials only from these environment variables:
 
 Never write credentials into this repository, `SKILL.md`, or a prompt.
 
+### Optional multi-image mode
+
+`GPT_IMAGE_MULTI_MODE` is optional. Its default is `fanout`, which works with relays that reject the Image API `n` parameter, so most users do not need to set it.
+
+| Value | Behavior |
+| --- | --- |
+| `fanout` | Default. For `--n N`, one CLI process sends N bounded-concurrency single-image requests and omits `n` from each request. |
+| `native` | Sends one Image API request with `n=N`. Use only when the configured provider is known to support `n`. |
+
+`--multi-mode native|fanout` overrides the environment variable for one command. The Skill never retries a failed request or switches modes after an error.
+
 ### Windows PowerShell: persistent user variables
 
 This prompt hides the key so it is not stored as plaintext in PowerShell command history:
@@ -255,6 +269,14 @@ For a reusable cutout with transparency:
 $gpt-image Generate a product photo of a white ceramic mug with a transparent background as a PNG.
 ```
 
+To request multiple variants in one turn:
+
+```text
+$gpt-image Generate four visual variants of a white ceramic mug on a gray studio background.
+```
+
+An explicit count authorizes that many paid outputs. In the default `fanout` mode, four outputs mean four Image API requests within one CLI process.
+
 ### Natural-language editing
 
 Attach or identify an existing image, then ask:
@@ -284,6 +306,25 @@ python "/path/to/gpt-image/scripts/image_gen.py" generate \
   --out mug-cutout.png
 ```
 
+Multiple outputs with the default relay-compatible mode:
+
+```shell
+python "/path/to/gpt-image/scripts/image_gen.py" generate \
+  --prompt "Four visual variants of a white ceramic mug" \
+  --n 4
+```
+
+Use native multi-image mode only for a provider confirmed to support `n`:
+
+```shell
+python "/path/to/gpt-image/scripts/image_gen.py" generate \
+  --prompt "Four visual variants of a white ceramic mug" \
+  --n 4 \
+  --multi-mode native
+```
+
+Fanout runs at most four requests concurrently and omits `n` from every request. It does not retry or fall back to another mode. If only some requests succeed, their output files are preserved and reported together with the failed request details.
+
 ### Direct CLI editing
 
 ```shell
@@ -303,7 +344,9 @@ python "/path/to/gpt-image/scripts/image_gen.py" edit \
   --out combined.png
 ```
 
-Add `--mask mask.png` for inpainting. The first input and mask must be same-size PNG files, and the mask must contain an alpha channel.
+PNG, JPEG, and WebP references are recognized from their content. Missing or incorrect extensions are normalized only in a temporary upload snapshot; source bytes and source files remain unchanged. The Skill does not automatically convert unsupported BMP, TIFF, GIF, HEIC, or AVIF files.
+
+Add `--mask mask.png` for inpainting. The first input and mask must contain same-size PNG data, and the mask must contain an alpha channel. Masks are not automatically converted or resized.
 
 If `--out` is omitted, the Skill saves to the platform Pictures directory with a `yyyyMMdd-HHmmss-fff-<uuid>` filename. Existing files are never overwritten.
 
@@ -339,6 +382,8 @@ Use the complete API root, such as `https://relay.example.com/v1`, not the websi
 ### The relay rejects generation or editing
 
 Confirm that the relay supports `gpt-image-2` on both `/v1/images/generations` and `/v1/images/edits`. Chat Completions or Responses compatibility alone does not prove Image API compatibility.
+
+If a multi-image request fails with `Unknown parameter: 'tools[0].n'.` or another error rejecting `n`, use the default `fanout` mode. Remove a `GPT_IMAGE_MULTI_MODE=native` override or pass `--multi-mode fanout`. No environment variable is required for the default mode.
 
 ### Installation ownership conflicts
 
