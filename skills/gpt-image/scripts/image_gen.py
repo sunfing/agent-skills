@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import ctypes
 from contextlib import ExitStack
 from datetime import datetime
@@ -32,6 +33,7 @@ except ImportError:  # pragma: no cover - exercised only without dependencies
 MODEL = "gpt-image-2"
 API_KEY_ENV = "GPT_IMAGE_API_KEY"
 BASE_URL_ENV = "GPT_IMAGE_BASE_URL"
+MULTI_MODE_ENV = "GPT_IMAGE_MULTI_MODE"
 REQUEST_TIMEOUT_SECONDS = 300.0
 MAX_INPUT_BYTES = 50_000_000
 MAX_MASK_BYTES = 50_000_000
@@ -39,19 +41,29 @@ MAX_INPUT_IMAGES = 16
 MAX_OUTPUT_IMAGES = 10
 MAX_PROMPT_CHARACTERS = 32_000
 MAX_ERROR_DETAIL_CHARACTERS = 4_000
+MAX_FANOUT_WORKERS = 4
 IO_CHUNK_BYTES = 64 * 1024
 BASE64_DECODE_CHUNK_CHARACTERS = 1024 * 1024
 PICTURES_FOLDER_ID = uuid.UUID("33e28130-4e1e-4676-835a-98395c3bc3bb")
-INPUT_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 FORMAT_EXTENSIONS = {
     "png": {".png"},
     "jpeg": {".jpg", ".jpeg"},
     "webp": {".webp"},
 }
+INPUT_FORMAT_SUFFIXES = {"png": ".png", "jpeg": ".jpg", "webp": ".webp"}
+MULTI_MODES = {"native", "fanout"}
 
 
 class CliError(RuntimeError):
     """A user-correctable CLI error."""
+
+
+class PartialFailureError(CliError):
+    """A fanout request where some outputs were published."""
+
+    def __init__(self, message: str, paths: Sequence[Path]) -> None:
+        super().__init__(message)
+        self.paths = list(paths)
 
 
 def _image_count(value: str) -> int:
@@ -116,6 +128,7 @@ def build_parser() -> argparse.ArgumentParser:
         )
         command.add_argument("--moderation", choices=("auto", "low"))
         command.add_argument("--n", type=_image_count)
+        command.add_argument("--multi-mode", choices=sorted(MULTI_MODES))
 
     generate = subparsers.add_parser("generate", help="Generate images from text")
     add_common_arguments(generate)
@@ -149,6 +162,14 @@ def _load_config() -> tuple[str, str]:
     if not base_url:
         raise CliError(f"{BASE_URL_ENV} is not set.")
     return api_key, _validate_base_url(base_url)
+
+
+def _resolve_multi_mode(value: str | None) -> str:
+    mode = (value or os.environ.get(MULTI_MODE_ENV, "fanout")).strip().lower()
+    if mode not in MULTI_MODES:
+        choices = ", ".join(sorted(MULTI_MODES))
+        raise CliError(f"{MULTI_MODE_ENV} must be one of: {choices}.")
+    return mode
 
 
 def _windows_pictures_dir() -> Path:
@@ -259,15 +280,11 @@ def _require_new_paths(paths: Sequence[Path]) -> None:
         raise CliError(f"Refusing to overwrite existing output: {existing}")
 
 
-def _resolve_input_path(value: str, label: str, *, mask: bool = False) -> Path:
+def _resolve_input_path(value: str) -> Path:
     path = Path(value).expanduser()
     if not path.is_absolute():
         path = Path.cwd() / path
     path = Path(os.path.abspath(path))
-    allowed_extensions = {".png"} if mask else INPUT_EXTENSIONS
-    if path.suffix.lower() not in allowed_extensions:
-        allowed = ", ".join(sorted(allowed_extensions))
-        raise CliError(f"{label} must use one of these formats: {allowed}.")
     return path
 
 
@@ -333,36 +350,40 @@ def _png_header_info(
     return width, height, color_type
 
 
-def _require_image_signature(
+def _inspect_image_signature(
     stream: BinaryIO,
     path: Path,
     label: str,
     file_size: int,
-) -> tuple[int, int, int] | None:
-    if path.suffix.lower() == ".png":
-        return _png_header_info(stream, label, path, file_size)
-
+) -> tuple[str, tuple[int, int, int] | None]:
     stream.seek(0)
+    header = stream.read(12)
+    stream.seek(0)
+    if header.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png", _png_header_info(stream, label, path, file_size)
+
     try:
-        if path.suffix.lower() in {".jpg", ".jpeg"}:
-            if file_size < 2 or _read_exact(stream, 2) != b"\xff\xd8":
-                raise ValueError
-        else:
-            header = _read_exact(stream, 12) if file_size >= 12 else b""
-            if header[:4] != b"RIFF" or header[8:] != b"WEBP":
-                raise ValueError
-    except (EOFError, OSError, ValueError) as error:
-        expected = "JPEG" if path.suffix.lower() in {".jpg", ".jpeg"} else "WebP"
-        raise CliError(f"{label} does not match its {expected} extension: {path}") from error
+        if file_size >= 2 and header.startswith(b"\xff\xd8"):
+            return "jpeg", None
+        if file_size >= 12 and header[:4] == b"RIFF" and header[8:] == b"WEBP":
+            return "webp", None
+        raise ValueError
+    except (OSError, ValueError) as error:
+        raise CliError(
+            f"{label} must contain a supported PNG, JPEG, or WebP image: {path}"
+        ) from error
     finally:
         stream.seek(0)
-    return None
 
 
 def _open_input_file(
-    stack: ExitStack, value: str, label: str, *, mask: bool = False
-) -> tuple[Path, BinaryIO, tuple[int, int, int] | None]:
-    path = _resolve_input_path(value, label, mask=mask)
+    value: str,
+    label: str,
+    snapshot_dir: Path,
+    *,
+    mask: bool = False,
+) -> tuple[Path, Path, tuple[int, int, int] | None, str]:
+    path = _resolve_input_path(value)
     size_limit = MAX_MASK_BYTES if mask else MAX_INPUT_BYTES
     reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
 
@@ -389,31 +410,48 @@ def _open_input_file(
                 size_mb = size_limit // 1_000_000
                 raise CliError(f"{label} must be smaller than {size_mb} MB: {path}")
 
-            snapshot_wrapper = stack.enter_context(
-                tempfile.NamedTemporaryFile(
-                    mode="w+b", prefix="gpt-image-input-", suffix=path.suffix
-                )
+            image_format, image_info = _inspect_image_signature(
+                source, path, label, opened.st_size
             )
-            snapshot = snapshot_wrapper.file
+            if mask and image_format != "png":
+                raise CliError(f"{label} must contain a PNG image: {path}")
+
+            snapshot_file = tempfile.NamedTemporaryFile(
+                mode="w+b",
+                prefix="gpt-image-input-",
+                suffix=INPUT_FORMAT_SUFFIXES[image_format],
+                dir=snapshot_dir,
+                delete=False,
+            )
+            snapshot_path = Path(snapshot_file.name)
             copied_bytes = 0
-            while chunk := source.read(IO_CHUNK_BYTES):
-                copied_bytes += len(chunk)
-                if copied_bytes >= size_limit:
-                    size_mb = size_limit // 1_000_000
-                    raise CliError(
-                        f"{label} must be smaller than {size_mb} MB: {path}"
-                    )
-                snapshot.write(chunk)
-            snapshot.flush()
-            snapshot.seek(0)
+            try:
+                while chunk := source.read(IO_CHUNK_BYTES):
+                    copied_bytes += len(chunk)
+                    if copied_bytes >= size_limit:
+                        size_mb = size_limit // 1_000_000
+                        raise CliError(
+                            f"{label} must be smaller than {size_mb} MB: {path}"
+                        )
+                    snapshot_file.write(chunk)
+                snapshot_file.flush()
+            finally:
+                snapshot_file.close()
     except CliError:
         raise
     except OSError as error:
         raise CliError(f"{label} is not an accessible file: {path}") from error
 
-    return path, snapshot, _require_image_signature(
-        snapshot, path, label, copied_bytes
-    )
+    try:
+        with snapshot_path.open("rb") as snapshot:
+            snapshot_format, snapshot_info = _inspect_image_signature(
+                snapshot, snapshot_path, label, copied_bytes
+            )
+    except OSError as error:
+        raise CliError(f"Could not snapshot {label.lower()}: {path}") from error
+    if snapshot_format != image_format or snapshot_info != image_info:
+        raise CliError(f"{label} changed while it was being copied: {path}")
+    return path, snapshot_path, snapshot_info, snapshot_format
 
 
 def _item_value(item: Any, name: str) -> Any:
@@ -447,6 +485,59 @@ def _response_b64_items(
             raise CliError("The API response must contain b64_json image data.")
         images.append(encoded)
     return images
+
+
+def _invoke_request(
+    client: Any,
+    operation: str,
+    request: dict[str, Any],
+    image_paths: Sequence[Path],
+    mask_path: Path | None,
+) -> Any:
+    payload = dict(request)
+    if operation == "generate":
+        return client.images.generate(**payload)
+
+    with ExitStack() as stack:
+        payload["image"] = [
+            stack.enter_context(path.open("rb")) for path in image_paths
+        ]
+        if mask_path is not None:
+            payload["mask"] = stack.enter_context(mask_path.open("rb"))
+        return client.images.edit(**payload)
+
+
+def _fanout_requests(
+    client: Any,
+    operation: str,
+    request: dict[str, Any],
+    image_paths: Sequence[Path],
+    mask_path: Path | None,
+    count: int,
+) -> tuple[dict[int, str | bytes], dict[int, str]]:
+    images: dict[int, str | bytes] = {}
+    failures: dict[int, str] = {}
+    workers = min(count, MAX_FANOUT_WORKERS)
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(
+                _invoke_request,
+                client,
+                operation,
+                request,
+                image_paths,
+                mask_path,
+            ): index
+            for index in range(count)
+        }
+        for future in as_completed(futures):
+            index = futures[future]
+            try:
+                response = future.result()
+                images[index] = _response_b64_items(response, 1)[0]
+            except Exception as error:
+                failures[index] = _format_error(error)
+    return images, failures
 
 
 def _publish_staged_output(source: BinaryIO, path: Path) -> None:
@@ -519,6 +610,11 @@ def execute(
     api_key, base_url = _load_config()
     output_format = args.output_format or "png"
     expected_count = args.n
+    multi_mode = (
+        _resolve_multi_mode(args.multi_mode)
+        if expected_count is not None and expected_count > 1
+        else "native"
+    )
     if not args.prompt or len(args.prompt) > MAX_PROMPT_CHARACTERS:
         raise CliError(
             f"--prompt must contain between 1 and {MAX_PROMPT_CHARACTERS} characters."
@@ -535,18 +631,34 @@ def execute(
     _require_new_paths(preflight_paths)
 
     with ExitStack() as stack:
-        opened_images: list[tuple[Path, BinaryIO, tuple[int, int, int] | None]] = []
-        opened_mask: tuple[Path, BinaryIO, tuple[int, int, int] | None] | None = None
+        opened_images: list[
+            tuple[Path, Path, tuple[int, int, int] | None, str]
+        ] = []
+        opened_mask: tuple[
+            Path, Path, tuple[int, int, int] | None, str
+        ] | None = None
         if args.operation == "edit":
+            snapshot_dir = Path(
+                stack.enter_context(
+                    tempfile.TemporaryDirectory(prefix="gpt-image-inputs-")
+                )
+            )
             if len(args.image) > MAX_INPUT_IMAGES:
-                raise CliError(f"At most {MAX_INPUT_IMAGES} input images are supported.")
-            if args.mask and Path(args.image[0]).suffix.lower() != ".png":
-                raise CliError("The first input image must be PNG when using a mask.")
+                raise CliError(
+                    f"At most {MAX_INPUT_IMAGES} input images are supported."
+                )
             opened_images = [
-                _open_input_file(stack, value, "Input image") for value in args.image
+                _open_input_file(value, "Input image", snapshot_dir)
+                for value in args.image
             ]
             if args.mask:
-                opened_mask = _open_input_file(stack, args.mask, "Mask", mask=True)
+                if opened_images[0][3] != "png":
+                    raise CliError(
+                        "The first input image must be PNG when using a mask."
+                    )
+                opened_mask = _open_input_file(
+                    args.mask, "Mask", snapshot_dir, mask=True
+                )
                 first_info = opened_images[0][2]
                 mask_info = opened_mask[2]
                 assert first_info is not None and mask_info is not None
@@ -587,27 +699,60 @@ def execute(
             "output_format",
             "output_compression",
             "background",
-            "n",
         ):
             value = getattr(args, name)
             if value is not None:
                 request[name] = value
 
-        if args.operation == "generate":
-            if args.moderation is not None:
+        if args.moderation is not None:
+            if args.operation == "generate":
                 request["moderation"] = args.moderation
-            response = client.images.generate(**request)
-        else:
-            if args.moderation is not None:
+            else:
                 request["extra_body"] = {"moderation": args.moderation}
-            request["image"] = [opened[1] for opened in opened_images]
-            if opened_mask is not None:
-                request["mask"] = opened_mask[1]
-            response = client.images.edit(**request)
 
-    encoded_images = _response_b64_items(response, expected_count)
-    candidates = _candidate_paths(output, len(encoded_images))
-    return _write_outputs(candidates, encoded_images)
+        image_paths = [opened[1] for opened in opened_images]
+        mask_path = opened_mask[1] if opened_mask is not None else None
+        if expected_count is not None and expected_count > 1 and multi_mode == "fanout":
+            images, failures = _fanout_requests(
+                client,
+                args.operation,
+                request,
+                image_paths,
+                mask_path,
+                expected_count,
+            )
+            selected_indices = sorted(images)
+            selected_paths = [preflight_paths[index] for index in selected_indices]
+            encoded_images = [images[index] for index in selected_indices]
+            published = (
+                _write_outputs(selected_paths, encoded_images)
+                if encoded_images
+                else []
+            )
+            if failures:
+                details = "; ".join(
+                    f"request {index + 1}: {message}"
+                    for index, message in sorted(failures.items())
+                )
+                raise PartialFailureError(
+                    f"Fanout completed with {len(published)} of {expected_count} "
+                    f"images; {details}",
+                    published,
+                )
+            return published
+
+        if expected_count is not None:
+            request["n"] = expected_count
+        response = _invoke_request(
+            client,
+            args.operation,
+            request,
+            image_paths,
+            mask_path,
+        )
+        encoded_images = _response_b64_items(response, expected_count)
+        candidates = _candidate_paths(output, len(encoded_images))
+        return _write_outputs(candidates, encoded_images)
 
 
 def _sanitize_error(message: str) -> str:
@@ -678,6 +823,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         paths = execute(args)
+    except PartialFailureError as error:
+        for path in error.paths:
+            print(f"OUTPUT={path}")
+        print(f"error: {_format_error(error)}", file=sys.stderr)
+        return 1
     except Exception as error:
         print(f"error: {_format_error(error)}", file=sys.stderr)
         return 1

@@ -12,6 +12,7 @@ Use the bundled `scripts/image_gen.py` directly. Do not load or call a hosted im
 - Require Python 3.10+ and the dependencies in `requirements.txt`.
 - Read credentials only from `GPT_IMAGE_API_KEY` and `GPT_IMAGE_BASE_URL`.
 - Require `GPT_IMAGE_BASE_URL` to be a complete HTTPS OpenAI-compatible API root ending in `/v1`.
+- Use optional `GPT_IMAGE_MULTI_MODE=native|fanout` to record how the configured provider handles explicit multi-image requests. The default is `fanout` for broad relay compatibility.
 - Never print, persist, or pass the API key as a command-line argument.
 
 ## Workflow
@@ -44,8 +45,11 @@ Pass user-requested supported options when present:
 - `--background auto|opaque|transparent`
 - `--moderation auto|low`
 - `--n <1..10>`
+- `--multi-mode native|fanout` to override `GPT_IMAGE_MULTI_MODE` for one command
 
-Do not pass `--n` for a single-image request. Pass it only when the user explicitly requests more than one image. When `--n` is omitted, accept, save, embed, and report every image returned by the API, up to the CLI limit of 10.
+Do not pass `--n` for a single-image request. Pass it only when the user explicitly requests more than one image; that explicit count authorizes generation of that many paid outputs without another confirmation. When `--n` is omitted, accept, save, embed, and report every image returned by the API, up to the CLI limit of 10.
+
+The default `fanout` mode favors OpenAI-compatible relays that reject `n`: one CLI process sends N bounded-concurrency requests while omitting `n` from every request. Use `native` only when the configured provider is known to support the Image API `n` parameter; it sends one API request with `n=N`. Fanout is requested work, not a retry. Never try one mode first and then switch modes after an error. Fanout performs no automatic retries, preserves successful outputs when only some requests fail, and reports both those paths and the failures.
 
 When the user requests a transparent background, pass `--background transparent`. Leave the output format unset for the default PNG, or pass `--output-format webp` when the user requests WebP. Never combine a transparent background with JPEG. Transparent background support for `gpt-image-2` is in preview; if the configured relay rejects it, report the error and stop without retrying with an opaque background.
 
@@ -59,4 +63,5 @@ When the user does not explicitly provide an output path, omit `--out` entirely 
 - Do not use Responses, streaming partial images, Batch, video, audio, or non-OpenAI image models.
 - A mask is optional and applies to the first input image. Require both the mask and first input to be PNG with matching dimensions; the mask must contain an alpha channel.
 - Accept at most 16 PNG, JPEG, or WebP input images, each smaller than 50 MB. Require a PNG mask smaller than 50 MB.
+- Detect input formats from file content rather than extensions. When a supported PNG, JPEG, or WebP file has a missing or incorrect extension, upload an unchanged temporary snapshot with the correct suffix and MIME type in the same CLI run. Do not modify or re-encode the original. Continue to reject unsupported image content; do not convert masks or change their dimensions or alpha semantics.
 - Treat a successful CLI exit as completion. Do not inspect, rewrite, or post-process generated images.
