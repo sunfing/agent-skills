@@ -12,7 +12,7 @@ This repository and its Skills are not affiliated with OpenAI, Anthropic, or any
 
 | Skill | Purpose | Documentation |
 | --- | --- | --- |
-| [`codex-chat-titles`](skills/codex-chat-titles/) | Preview and normalize Codex conversation names across projects as `MMDD｜类型｜主题`, using `createdAt` and confirmation-gated title-only updates through the local app-server. | [English](docs/codex-chat-titles/README.md) · [简体中文](docs/codex-chat-titles/README.zh-CN.md) |
+| [`codex-chat-titles`](skills/codex-chat-titles/) | Preview and normalize Codex conversation names across projects as `MMDD｜类型｜主题`, using `createdAt`, default confirmation, and explicitly preauthorized same-turn title-only updates through the local app-server. | [English](docs/codex-chat-titles/README.md) · [简体中文](docs/codex-chat-titles/README.zh-CN.md) |
 | [`gpt-image`](skills/gpt-image/) | Generate, edit, and request multiple bitmap variants with the fixed `gpt-image-2` model through a user-configured OpenAI-compatible Image API, including relay-compatible fanout and reference-image format normalization. | [English](docs/gpt-image/README.md) · [简体中文](docs/gpt-image/README.zh-CN.md) |
 
 ## Install with CC Switch

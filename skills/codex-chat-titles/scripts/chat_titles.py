@@ -471,8 +471,11 @@ def command_validate(args: argparse.Namespace) -> None:
 
 
 def command_apply(args: argparse.Namespace) -> None:
-    if not args.confirm:
-        raise ValueError("Apply requires --confirm after the user approves the preview table.")
+    if not args.confirm and not args.preauthorized:
+        raise ValueError(
+            "Apply requires --confirm after preview approval or --preauthorized "
+            "when the user explicitly waived a second confirmation."
+        )
     payload, digest = _load_mapping(args.map)
     if not hmac.compare_digest(digest, args.expected_sha256.lower()):
         raise ValueError("Mapping SHA-256 does not match the validated preview.")
@@ -508,7 +511,17 @@ def build_parser() -> argparse.ArgumentParser:
     apply = subparsers.add_parser("apply")
     apply.add_argument("--map", type=Path, required=True)
     apply.add_argument("--expected-sha256", required=True)
-    apply.add_argument("--confirm", action="store_true")
+    authorization = apply.add_mutually_exclusive_group()
+    authorization.add_argument(
+        "--confirm",
+        action="store_true",
+        help="Apply after the user confirms the displayed preview.",
+    )
+    authorization.add_argument(
+        "--preauthorized",
+        action="store_true",
+        help="Apply when the initial request explicitly waived a second confirmation.",
+    )
     apply.set_defaults(func=command_apply)
     return parser
 

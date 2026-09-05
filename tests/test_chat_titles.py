@@ -244,6 +244,7 @@ class MappingTests(unittest.TestCase):
                 map=mapping,
                 expected_sha256="0" * 64,
                 confirm=True,
+                preauthorized=False,
                 timeout=1,
             )
             with self.assertRaisesRegex(ValueError, "SHA-256"), patch.object(
@@ -257,10 +258,47 @@ class MappingTests(unittest.TestCase):
             map=Path("unused.json"),
             expected_sha256="0" * 64,
             confirm=False,
+            preauthorized=False,
             timeout=1,
         )
-        with self.assertRaisesRegex(ValueError, "requires --confirm"):
+        with self.assertRaisesRegex(ValueError, "requires --confirm.*--preauthorized"):
             cli.command_apply(args)
+
+    def test_apply_accepts_explicit_preauthorization(self):
+        digest = "a" * 64
+        args = SimpleNamespace(
+            map=Path("unused.json"),
+            expected_sha256=digest,
+            confirm=False,
+            preauthorized=True,
+            timeout=1,
+        )
+        result = {"changed": 1, "skipped": 0, "failed": 0, "failures": []}
+        with patch.object(
+            cli, "_load_mapping", return_value=(self.payload, digest)
+        ), patch.object(cli, "AppServerClient") as client_class, patch.object(
+            cli, "validate_mapping", return_value=self.payload["items"]
+        ), patch.object(cli, "apply_mapping", return_value=result), patch(
+            "sys.stdout", new_callable=io.StringIO
+        ) as stdout:
+            cli.command_apply(args)
+        client_class.assert_called_once_with(1)
+        self.assertEqual(result, json.loads(stdout.getvalue()))
+
+    def test_apply_flags_are_mutually_exclusive(self):
+        parser = cli.build_parser()
+        with self.assertRaises(SystemExit), redirect_stderr(io.StringIO()):
+            parser.parse_args(
+                [
+                    "apply",
+                    "--map",
+                    "map.json",
+                    "--expected-sha256",
+                    "0" * 64,
+                    "--confirm",
+                    "--preauthorized",
+                ]
+            )
 
 
 if __name__ == "__main__":

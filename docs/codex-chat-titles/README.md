@@ -10,7 +10,7 @@ Normalize Codex conversation names to concise Chinese sidebar titles:
 0901｜修复｜ChatGPT 启动失败
 ```
 
-The Skill previews an exact old-to-new table and waits for confirmation before it renames anything. Dates always come from each thread's `createdAt`, converted to `Asia/Shanghai`.
+The Skill always previews an exact old-to-new table. By default, it waits for confirmation before renaming anything; when the initial request explicitly waives a second confirmation, it can preview, validate, and apply in the same turn. Dates always come from each thread's `createdAt`, converted to `Asia/Shanghai`.
 
 ## Safety and scope
 
@@ -71,7 +71,7 @@ Invoke the Skill explicitly:
 $codex-chat-titles Preview standardized titles for all my visible Codex conversations.
 ```
 
-The first response is only the preview table:
+In the default confirmation mode, the first response is only the preview table:
 
 ```markdown
 | 原名称 | 新名称 |
@@ -79,7 +79,15 @@ The first response is only the preview table:
 | 优化批次文字显示 | 0903｜优化｜批次文字显示 |
 ```
 
-No title changes until you explicitly confirm that table. After confirmation, the Skill applies only the approved mapping and reports changed, skipped, and failed counts.
+By default, no title changes occur until you explicitly confirm that table. After confirmation, the Skill applies only the approved mapping and reports changed, skipped, and failed counts.
+
+To complete the operation in one turn, explicitly waive the second confirmation in the initial request:
+
+```text
+$codex-chat-titles Normalize all my visible Codex conversation titles and apply directly after preview without a second confirmation.
+```
+
+The waiver applies only to the mapping generated for that request and does not carry over to later runs. Both modes retain the SHA-256, old-title, and `createdAt` checks.
 
 ## Compatibility check
 
