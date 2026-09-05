@@ -70,6 +70,32 @@ class TitleValidationTests(unittest.TestCase):
             ):
                 cli.validate_title(title, created_at)
 
+    def test_accepts_spaces_between_chinese_and_ascii(self):
+        created_at = timestamp("2026-09-03T02:00:00")
+        for title in (
+            "0903｜修复｜ChatGPT 启动失败",
+            "0903｜功能｜配置 WebDAV 同步",
+            "0903｜设计｜P3 安全方案",
+            "0903｜研究｜SS2022 UDP 默认行为",
+        ):
+            with self.subTest(title=title):
+                cli.validate_title(title, created_at)
+
+    def test_rejects_missing_spaces_between_chinese_and_ascii(self):
+        created_at = timestamp("2026-09-03T02:00:00")
+        for title in (
+            "0903｜修复｜ChatGPT启动失败",
+            "0903｜功能｜配置WebDAV同步",
+            "0903｜设计｜P3安全方案",
+            "0903｜研究｜生成3个版本",
+            "0903｜修复｜ChatGPT  启动失败",
+            "0903｜功能｜配置\tWebDAV 同步",
+        ):
+            with self.subTest(title=title), self.assertRaisesRegex(
+                ValueError, "separate Chinese text"
+            ):
+                cli.validate_title(title, created_at)
+
 
 class AppServerDataTests(unittest.TestCase):
     def test_paged_requests_follow_next_cursor(self):

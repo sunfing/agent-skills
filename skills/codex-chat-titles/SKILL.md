@@ -34,6 +34,7 @@ Choose exactly one type:
 - Derive the topic from the actual conversation, not from the current title alone.
 - Prefer the existing topic only when it accurately and specifically describes the conversation.
 - Keep the topic concise and concrete, normally 2-16 Chinese characters. Preserve necessary short identifiers such as `GitHub`, `API`, or `TTS`.
+- Insert exactly one ASCII space at every boundary between Chinese text and ASCII letters or digits, for example `ChatGPT 启动失败`, `配置 WebDAV 同步`, and `P3 安全方案`. Keep identifiers and brand names such as `CC Switch`, `P3.0`, and `SS2022` intact.
 - Do not repeat the project name. Do not expose secrets, personal data, URLs, local paths, UUIDs, account identifiers, or credential fragments.
 - If the type or topic is uncertain after reading available context, leave the complete original title unchanged. Do not guess.
 - Leave an already correct and accurate title unchanged.

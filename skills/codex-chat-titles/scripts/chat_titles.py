@@ -31,6 +31,12 @@ TITLE_RE = re.compile(
 FENCE_RE = re.compile(r"```[\s\S]*?```|~~~[\s\S]*?~~~")
 INLINE_CODE_RE = re.compile(r"`[^`\n]{1,300}`")
 MEMORY_CITATION_RE = re.compile(r"<oai-mem-citation>[\s\S]*?</oai-mem-citation>")
+CJK_ASCII_BOUNDARY_RE = re.compile(
+    r"(?:"
+    r"[\u3400-\u4dbf\u4e00-\u9fff](?P<cjk_spaces>[ \t]*)(?=[A-Za-z0-9])"
+    r"|[A-Za-z0-9](?P<ascii_spaces>[ \t]*)(?=[\u3400-\u4dbf\u4e00-\u9fff])"
+    r")"
+)
 
 try:
     SHANGHAI_TZ = ZoneInfo(TIMEZONE)
@@ -347,6 +353,12 @@ def validate_title(title: str, created_at: int) -> None:
     topic = match.group("topic").strip()
     if topic != match.group("topic") or len(topic) < 2 or len(topic) > 24:
         raise ValueError(f"Topic must contain 2-24 characters without edge spaces: {title}")
+    for boundary in CJK_ASCII_BOUNDARY_RE.finditer(topic):
+        spaces = boundary.group("cjk_spaces") or boundary.group("ascii_spaces") or ""
+        if spaces != " ":
+            raise ValueError(
+                f"Topic must separate Chinese text from ASCII letters or digits with one space: {title}"
+            )
 
 
 def _validate_mapping_shape(payload: dict[str, Any]) -> list[dict[str, Any]]:

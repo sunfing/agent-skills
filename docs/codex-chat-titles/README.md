@@ -7,6 +7,7 @@ Normalize Codex conversation names to concise Chinese sidebar titles:
 ```text
 0903｜优化｜批次文字显示
 0902｜功能｜整合快捷键提示页
+0901｜修复｜ChatGPT 启动失败
 ```
 
 The Skill previews an exact old-to-new table and waits for confirmation before it renames anything. Dates always come from each thread's `createdAt`, converted to `Asia/Shanghai`.
@@ -19,6 +20,7 @@ The Skill previews an exact old-to-new table and waits for confirmation before i
 - Includes visible, non-archived conversations across all projects by default. Archived conversations are included only when explicitly requested.
 - Uses the canonical project name when assigned, otherwise the thread `cwd` directory name, only to prevent repeating it in the topic.
 - Skips a conversation when its type or topic cannot be determined reliably.
+- Uses one ASCII space at every boundary between Chinese text and ASCII letters or digits while preserving identifiers and brand names internally.
 - Binds the approved preview to its mapping file with SHA-256 and rechecks the old title and `createdAt` before the first update.
 
 ## Requirements
