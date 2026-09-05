@@ -12,6 +12,7 @@
 
 | Skill | 用途 | 文档 |
 | --- | --- | --- |
+| [`codex-chat-titles`](skills/codex-chat-titles/) | 基于 `createdAt`，通过本机 app-server 在确认后仅修改对话名称，将 Codex 所有项目下的对话预览并统一为 `MMDD｜类型｜主题`。 | [English](docs/codex-chat-titles/README.md) · [简体中文](docs/codex-chat-titles/README.zh-CN.md) |
 | [`gpt-image`](skills/gpt-image/) | 通过用户配置的 OpenAI-compatible Image API，使用固定模型 `gpt-image-2` 生成、编辑或一次请求多个位图版本，并支持中转站兼容的 fanout 与参考图格式规范化。 | [English](docs/gpt-image/README.md) · [简体中文](docs/gpt-image/README.zh-CN.md) |
 
 ## 使用 CC Switch 安装
@@ -66,12 +67,19 @@ Codex 的默认目标目录通常是 Windows 的 `%USERPROFILE%\.codex\skills\<s
 ```text
 agent-skills/
 ├── skills/
+│   ├── codex-chat-titles/
+│   │   ├── SKILL.md
+│   │   ├── agents/
+│   │   └── scripts/
 │   └── gpt-image/
 │       ├── SKILL.md
 │       ├── agents/
 │       ├── requirements.txt
 │       └── scripts/
 ├── docs/
+│   ├── codex-chat-titles/
+│   │   ├── README.md
+│   │   └── README.zh-CN.md
 │   └── gpt-image/
 │       ├── README.md
 │       └── README.zh-CN.md

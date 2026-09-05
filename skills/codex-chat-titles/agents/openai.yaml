@@ -1,0 +1,7 @@
+interface:
+  display_name: "Codex Chat Titles"
+  short_description: "Preview and normalize Codex conversation titles"
+  default_prompt: "Use $codex-chat-titles to preview consistent Chinese titles for all visible Codex conversations, then wait for my confirmation before renaming them."
+
+policy:
+  allow_implicit_invocation: true
