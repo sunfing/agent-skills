@@ -12,6 +12,7 @@
 
 | Skill | 用途 | 文档 |
 | --- | --- | --- |
+| [`arcgis-forestry-corner-table`](skills/arcgis-forestry-corner-table/) | 将 ArcGIS 已完成折点转点与添加 XY 后导出的使用林地拐点初表整理成报批 Excel，自动识别带号、闭合面环、多面环地块并生成 J 点编号、核查表与表 B.8 三栏版。 | [English](docs/arcgis-forestry-corner-table/README.md) · [简体中文](docs/arcgis-forestry-corner-table/README.zh-CN.md) |
 | [`codex-chat-titles`](skills/codex-chat-titles/) | 基于 `createdAt`，通过本机 app-server 将 Codex 所有项目下的对话预览并统一为 `MMDD｜类型｜主题`；默认二次确认，初始请求明确豁免时可同轮执行。 | [English](docs/codex-chat-titles/README.md) · [简体中文](docs/codex-chat-titles/README.zh-CN.md) |
 | [`gpt-image`](skills/gpt-image/) | 通过用户配置的 OpenAI-compatible Image API，使用固定模型 `gpt-image-2` 生成、编辑或一次请求多个位图版本，并支持中转站兼容的 fanout 与参考图格式规范化。 | [English](docs/gpt-image/README.md) · [简体中文](docs/gpt-image/README.zh-CN.md) |
 
@@ -88,7 +89,7 @@ agent-skills/
 
 ## 开发验证
 
-当前测试使用 mock，不会调用真实或付费 API：
+当前测试使用 mock 或本地临时数据，不会调用真实或付费 API：
 
 ```shell
 python -m unittest discover -s tests -v

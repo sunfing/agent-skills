@@ -1,0 +1,7 @@
+interface:
+  display_name: "ArcGIS Forestry Corner Table"
+  short_description: "Convert ArcGIS forestry corner exports into approval-ready Excel"
+  default_prompt: "Use $arcgis-forestry-corner-table to validate an ArcGIS-exported forestry corner-point table and generate the approval-ready Excel workbook."
+
+policy:
+  allow_implicit_invocation: true
