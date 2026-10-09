@@ -12,6 +12,7 @@ This repository and its Skills are not affiliated with OpenAI, Anthropic, or any
 
 | Skill | Purpose | Documentation |
 | --- | --- | --- |
+| [`arcgis-forestry-corner-table`](skills/arcgis-forestry-corner-table/) | Convert ArcGIS forestry/land-use corner-point exports into approval-ready Excel, including zone validation, closed-ring detection, multi-ring parcels, J-point numbering, QA sheets, and an Appendix B.8 three-block layout. | [English](docs/arcgis-forestry-corner-table/README.md) · [简体中文](docs/arcgis-forestry-corner-table/README.zh-CN.md) |
 | [`codex-chat-titles`](skills/codex-chat-titles/) | Preview and normalize Codex conversation names across projects as `MMDD｜类型｜主题`, using `createdAt`, default confirmation, and explicitly preauthorized same-turn title-only updates through the local app-server. | [English](docs/codex-chat-titles/README.md) · [简体中文](docs/codex-chat-titles/README.zh-CN.md) |
 | [`gpt-image`](skills/gpt-image/) | Generate, edit, and request multiple bitmap variants with the fixed `gpt-image-2` model through a user-configured OpenAI-compatible Image API, including relay-compatible fanout and reference-image format normalization. | [English](docs/gpt-image/README.md) · [简体中文](docs/gpt-image/README.zh-CN.md) |
 
@@ -88,7 +89,7 @@ agent-skills/
 
 ## Development
 
-The current test suite uses mocks and does not call a live or paid API:
+The current test suite uses mocks or local temporary fixtures and does not call a live or paid API:
 
 ```shell
 python -m unittest discover -s tests -v
