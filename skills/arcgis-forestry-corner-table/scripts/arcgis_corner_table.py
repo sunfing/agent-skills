@@ -301,7 +301,7 @@ def report_data(inp,out,rows,summary,zone,resolved,threshold):
 
 def parse_args(argv=None):
     p=argparse.ArgumentParser(description="ArcGIS 林勘拐点初表 → 报批 Excel")
-    p.add_argument("input"); p.add_argument("--output"); p.add_argument("--expected-zone",type=int)
+    p.add_argument("input"); p.add_argument("--output",help="可选。显式覆盖输出路径；省略时固定输出到输入文件同级目录。"); p.add_argument("--expected-zone",type=int)
     p.add_argument("--parcel-field"); p.add_argument("--small-area-threshold",type=float,default=0.0001)
     p.add_argument("--closure-tolerance",type=float,default=0.001); p.add_argument("--b8-rows",type=int,default=50)
     p.add_argument("--check-only",action="store_true"); p.add_argument("--json",action="store_true")
