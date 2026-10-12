@@ -48,6 +48,20 @@ Install:
 python -m pip install -r <skill-root>/requirements.txt
 ```
 
+## Default output location
+
+When the input is a directly accessible local absolute path, the generated workbook must default to the **same directory as the input file**. Do not pass `--output` unless the user explicitly requests another location.
+
+```text
+Input:
+D:\project\forest-temp-Zone39_initial.xls
+
+Default output:
+D:\project\forest-temp-Zone39_initial_corner_table.xlsx
+```
+
+Do not redirect output to a ChatGPT Work/Codex workspace or an `outputs` directory merely because one exists. Fall back to a workspace output directory only when the input is an uploaded attachment with no accessible original local path, the source directory is not writable, or the user explicitly requests another location. State the fallback reason clearly.
+
 ## Usage
 
 ```text
