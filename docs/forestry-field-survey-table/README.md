@@ -1,0 +1,27 @@
+# Forestry field survey table
+
+[Skills index](../../README.md) | [简体中文](README.zh-CN.md)
+
+Prepare a fixed A.1 forestry field-survey workbook from `.xls` or `.xlsx`. The clean template is bundled. This skill covers pre-survey preparation only; post-survey sheets 1–6 are outside scope.
+
+## Requirements and installation
+
+Windows, licensed desktop Microsoft Excel, and Python 3.10+. No pip dependencies. Finish Excel first-run setup. Install `forestry-field-survey-table` from this repository with CC Switch, or copy the complete skill folder into your agent client’s skill directory, including assets and scripts.
+
+```powershell
+python "<skill-root>/scripts/forestry_field_survey_table.py" "D:/project/使用林地小班因子调查表_初表.xls"
+```
+
+Use `--sheet` for multi-sheet inputs; `--id-field` and `--area-field` select confirmed parcel identifiers and occupied area in hectares. Defaults are `小班编` and `面积`. Optional confirmed location names: `--city`, `--county`, `--township`. `--check-only` uses Excel and temporary files without creating a deliverable.
+
+The default output is next to the source, replacing trailing `_初表` with `_外调.xlsx`. Existing output is never overwritten; select another `--output`. Source data stays unchanged. Preserve source identifiers, real zeroes, template dimensions and formatting; no background fills. Slopes remain numeric degrees. Unmapped codes remain unchanged. Missing survey/design inputs stay blank. Long text can be clipped by the fixed template, but full values remain stored. Numeric display precision follows the template without rounding stored values.
+
+Read the [field mapping](../../skills/forestry-field-survey-table/references/field-mapping.md) before processing: bundled mappings are limited working conventions, not a universal official dictionary.
+
+## Validation and upgrades
+
+```shell
+python -m unittest discover -s tests -p test_forestry_field_survey_table.py -v
+```
+
+Portable tests check transformation boundaries and the clean template. CI does not provide desktop Excel. Runtime verification saves and reopens in Excel and compares values and key styles before publishing; CI alone cannot prove Excel compatibility. Test an actual input to a temporary output after installation or template changes. Do not replace native verification with raw XML construction. Update using the original installation tool; preserve user outputs and custom mapping changes.
