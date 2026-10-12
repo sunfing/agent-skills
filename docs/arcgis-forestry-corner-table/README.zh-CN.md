@@ -42,6 +42,20 @@
 python -m pip install -r "$env:USERPROFILE\.codex\skills\arcgis-forestry-corner-table\requirements.txt"
 ```
 
+## 默认输出位置
+
+当输入是 Agent 能直接访问的本地绝对路径时，结果默认保存在**输入文件同级目录**，无需额外指定 `--output`：
+
+```text
+输入：
+D:\项目\林地红线临时Zone39_初表.xls
+
+默认输出：
+D:\项目\林地红线临时Zone39_拐点坐标表.xlsx
+```
+
+运行在 ChatGPT Work 或 Codex workspace 时，也不要仅因为存在 `outputs` 目录就自动改存那里。只有聊天上传附件没有可访问的原始本地路径、源目录不可写，或用户明确指定其他位置时，才回退到工作区可写目录；发生回退时应明确说明原因。
+
 ## 使用
 
 ```text
