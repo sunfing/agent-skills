@@ -49,6 +49,18 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(corner.std_grade(3),"Ⅲ")
         self.assertEqual(corner.std_grade("IV"),"Ⅳ")
 
+    def test_default_output_stays_next_to_input(self):
+        inp=Path("/work/project/林地红线临时Zone39_初表.xls")
+        out=corner.default_output_path(inp)
+        self.assertEqual(out.parent, inp.parent)
+        self.assertEqual(out.name, "林地红线临时Zone39_拐点坐标表.xlsx")
+
+    def test_default_output_without_initial_suffix_stays_next_to_input(self):
+        inp=Path("/work/project/临时林地.xls")
+        out=corner.default_output_path(inp)
+        self.assertEqual(out.parent, inp.parent)
+        self.assertEqual(out.name, "临时林地_拐点坐标表.xlsx")
+
     def test_check_only_csv(self):
         data="序号,面积,地类,森林类,保护等,POINT_X,POINT_Y\n" \
              "1,0.1,乔木林地,022,4,39603000,4573000\n" \
