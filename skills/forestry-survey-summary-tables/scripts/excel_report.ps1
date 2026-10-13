@@ -14,14 +14,20 @@ try {
  foreach($d in $j.sheets){
   $s=$b.Worksheets.Item($d.name)
   $n=[int]$d.name;$last=[int]$d.last;$nc=[int]$d.cols;$head=[int]$d.head
+  $ref=$t.Worksheets.Item($d.name)
   if($n -ne 6){
-   $ref=$t.Worksheets.Item($d.name)
    $ref.Range($ref.Cells.Item(1,1),$ref.Cells.Item($head,$nc)).Copy($s.Range('A1'))
    for($c=1;$c -le $nc;$c++){$s.Columns.Item($c).ColumnWidth=$ref.Columns.Item($c).ColumnWidth}
   }else{
-   $s.Columns.ColumnWidth=7
-   $s.Columns.Item(1).ColumnWidth=5;$s.Columns.Item(2).ColumnWidth=6
-   $s.Columns.Item(3).ColumnWidth=7;$s.Columns.Item(4).ColumnWidth=9;$s.Columns.Item(5).ColumnWidth=5
+   # Sheet 6 is a real template too. Keep the fixed administration columns and
+   # repeat its first three-column fee block for the configured categories.
+   $ref.Range('A1:AB7').Copy($s.Range('A1'))
+   $s.Range('A1:AB7').UnMerge();$s.Range('A1:AB7').ClearContents()
+   if($nc -lt 28){$s.Range($s.Cells.Item(1,$nc+1),$s.Cells.Item(7,28)).Clear()}
+   for($c=1;$c -le $nc;$c++){
+    $sc=if($c -le 7){$c}else{8+(($c-8)%3)}
+    $s.Columns.Item($c).ColumnWidth=$ref.Columns.Item($sc).ColumnWidth
+   }
   }
   $all=$s.Range($s.Cells.Item(1,1),$s.Cells.Item($last,$nc))
   $all.Font.Name='宋体';$all.Font.Size=8;$all.Font.Bold=$false
@@ -47,8 +53,18 @@ try {
    $s.Rows.Item(1).RowHeight=36;$s.Rows.Item(2).RowHeight=18
    $s.Range('A3:K5').RowHeight=20;$s.Range("A6:K$last").RowHeight=24
   }elseif($n -eq 6){
-   $s.Rows.Item(1).RowHeight=36;$s.Rows.Item(2).RowHeight=18;$s.Rows.Item(3).RowHeight=8
-   $s.Range($s.Cells.Item(4,1),$s.Cells.Item(5,$nc)).RowHeight=26
+   for($r=1;$r -le $head;$r++){$s.Rows.Item($r).RowHeight=$ref.Rows.Item($r).RowHeight}
+   # Restore template typography after the common data-cell defaults. Header
+   # merges/labels come from the project payload; formatting comes from Excel.
+   for($r=1;$r -le $head;$r++){for($c=1;$c -le $nc;$c++){
+    $sc=if($c -le 7){$c}else{8+(($c-8)%3)}
+    $from=$ref.Cells.Item($r,$sc);$to=$s.Cells.Item($r,$c)
+    $to.Font.Name=$from.Font.Name;$to.Font.Size=$from.Font.Size;$to.Font.Bold=$from.Font.Bold
+   }}
+   $s.Range('A1').MergeArea.Font.Name=$ref.Range('A1').Font.Name
+   $s.Range('A1').MergeArea.Font.Size=$ref.Range('A1').Font.Size
+   $s.Range('A1').MergeArea.Font.Bold=$ref.Range('A1').Font.Bold
+   $s.Range('A3').MergeArea.HorizontalAlignment=-4152
   }else{
    $s.Columns.Item('F').ColumnWidth=7;$s.Columns.Item('L').ColumnWidth=8
    $s.Columns.Item('P').ColumnWidth=5;$s.Columns.Item('I').ColumnWidth=8

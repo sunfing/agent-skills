@@ -299,20 +299,22 @@ def build(records, cfg):
         s['last']=5+len(cfg['ecology']['records'])
     s['formats']=[(f'B6:J{s["last"]}', '0.0000;-0.0000;;@')];sheets.append(s)
     fee=cfg['fee'];cats=fee.get('categories',[]) if fee['mode']!='not_applicable' else []
-    nc=max(10,7+len(cats)*3);s=make_sheet(6,5,nc)
-    merge(s,f'A1:{col(nc)}1',f'附表6 {cfg["project_name"]}\n{cfg["use_nature"]}使用林地森林植被恢复费'+('参考测算表' if fee['mode']=='reference' else '测算表'))
-    merge(s,f'A2:{col(nc)}2','单位：面积—公顷；折算单价—元/平方米；金额—万元')
+    fee_header=read_book(ROOT/'assets/report-headers.xlsx')['6']
+    nc=max(10,7+len(cats)*3);s=make_sheet(6,7,nc)
+    merge(s,f'A1:{col(nc)}2',f'附表6 {cfg["project_name"]}\n{cfg["use_nature"]}使用林地森林植被恢复费'+('参考测算表' if fee['mode']=='reference' else '测算表'))
+    merge(s,f'A3:{col(nc)}3','单位：面积—公顷；折算单价—元/平方米；金额—万元')
     if not cats:
-        merge(s,f'A4:{col(nc)}5','不适用：'+fee['basis']);s['last']=5
+        merge(s,f'A4:{col(nc)}7','不适用：'+fee['basis']);s['last']=7
     else:
-        for c, h in enumerate(['市','县','乡（镇）','村','林地权属','面积合计','金额合计'],1): merge(s,f'{col(c)}4:{col(c)}5',h)
+        for c in range(1,6): merge(s,f'{col(c)}4:{col(c)}7',val(fee_header,f'{col(c)}4'))
+        merge(s,'F4:G6',val(fee_header,'F4'));setcell(s,'F7',val(fee_header,'F7'));setcell(s,'G7',val(fee_header,'G7'))
         for i,cat in enumerate(cats):
-            c=8+i*3;merge(s,f'{col(c)}4:{col(c+2)}4',cat['name'])
-            for j,h in enumerate(['面积','折算单价','金额']):setcell(s,f'{col(c+j)}5',h)
-        labels(s,gs,own,6,1)
+            c=8+i*3;merge(s,f'{col(c)}4:{col(c+2)}6',cat['name'])
+            for j in range(3):setcell(s,f'{col(c+j)}7',val(fee_header,f'{col(8+j)}7'))
+        labels(s,gs,own,8,1)
         for i,g in enumerate(gs):
             for j,o in enumerate(own):
-                rr=6+i*len(own)+j
+                rr=8+i*len(own)+j
                 items=[r for r in records if r['admin'][:len(g)]==g and (o=='计' or r['own']==o)]
                 put_sum(s,f'F{rr}',items)
                 setcell(s,f'G{rr}','=SUM('+','.join(f'{col(10+k*3)}{rr}' for k in range(len(cats)))+')')
@@ -325,8 +327,8 @@ def build(records, cfg):
                     setcell(s,f'{col(c+2)}{rr}',formula)
                     s['checks'][f'{col(c+2)}{rr}']=sum(r['area']*r['rate'] for r in subset)
                     setcell(s,f'{col(c+1)}{rr}',f'=IF({col(c)}{rr}=0,"",{col(c+2)}{rr}/{col(c)}{rr})')
-        s['last']=5+size
-        s['formats']=[(f'F6:{col(nc)}{s["last"]}','0.0000;-0.0000;;@')]+[(f'{col(9+k*3)}6:{col(9+k*3)}{s["last"]}','0.00;-0.00;;@') for k in range(len(cats))]
+        s['last']=7+size
+        s['formats']=[(f'F8:{col(nc)}{s["last"]}','0.0000;-0.0000;;@')]+[(f'{col(9+k*3)}8:{col(9+k*3)}{s["last"]}','0.00;-0.00;;@') for k in range(len(cats))]
         s['table_last']=s['last']
         for note in [fee['basis'],fee['context'],fee['note']]:
             s['last']+=1;merge(s,f'A{s["last"]}:{col(nc)}{s["last"]}',note);s['heights'][str(s['last'])]=32

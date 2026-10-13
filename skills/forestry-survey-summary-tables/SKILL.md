@@ -5,7 +5,7 @@ description: 根据已完善的 A.1 使用林地小班因子调查表生成报�
 
 # 使用林地报告附表1—7
 
-使用内置 `assets/report-headers.xlsx`，来源为已确认的《使用林地小班因子调查表.xlsx》表头，已清除项目数据。Windows、桌面 Microsoft Excel、Python 3.10+，不需额外 Python 包。
+使用内置 `assets/report-headers.xlsx`，按1—7顺序完整保留已确认的《使用林地小班因子调查表.xlsx》表头，已清除项目数据。附表6读取模板的基础版式、字体、行高和列宽，再按项目配置调整收费分类、单价和必要列数，不沿用模板中的分类作为项目结论。Windows、桌面 Microsoft Excel、Python 3.10+，不需额外 Python 包。
 
 ## 执行边界
 
