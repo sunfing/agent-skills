@@ -34,7 +34,6 @@ try {
         $n=$j.rows.Count
         if ($n -lt 1) { throw 'No rows' }
         $height=$s.Rows.Item(4).RowHeight
-        $widths=@(); for ($c=1; $c -le 33; $c++) { $widths += $s.Columns.Item($c).ColumnWidth }
         $headerHeight=$s.Rows.Item(3).RowHeight
         if ($n -gt 1) { $s.Range('A4:AG4').Copy($s.Range("A5:AG$($n+3)")) }
         $s.Range("A4:AG$($n+3)").RowHeight=$height
@@ -50,6 +49,19 @@ try {
         }
         $s.Cells.Interior.Pattern=-4142
         $s.Range("AA4:AA$($n+3)").NumberFormat='0"°"'
+        # Fit only headers and data, excluding the merged title. Temporarily
+        # disable wrapping so long species names contribute their full width.
+        for ($c=1; $c -le 33; $c++) {
+            $range=$s.Range($s.Cells.Item(3,$c),$s.Cells.Item($n+3,$c))
+            $wrap=@(); for ($r=3; $r -le $n+3; $r++) { $wrap += $s.Cells.Item($r,$c).WrapText }
+            $range.WrapText=$false
+            $range.Columns.AutoFit() | Out-Null
+            $s.Columns.Item($c).ColumnWidth=[Math]::Min(255,$s.Columns.Item($c).ColumnWidth+1)
+            for ($r=3; $r -le $n+3; $r++) { $s.Cells.Item($r,$c).WrapText=$wrap[$r-3] }
+        }
+        $s.Rows.Item(3).RowHeight=$headerHeight
+        $s.Range("A4:AG$($n+3)").RowHeight=$height
+        $widths=@(); for ($c=1; $c -le 33; $c++) { $widths += $s.Columns.Item($c).ColumnWidth }
         $s.Range('A1').Select() | Out-Null
         $book.SaveAs($j.output,51) | Out-Null
         $book.Close($false); $book=$null

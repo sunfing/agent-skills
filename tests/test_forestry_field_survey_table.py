@@ -7,9 +7,13 @@ class SurveyTests(unittest.TestCase):
   h=['小班编','面积','LIN_BAN','XIAO_BAN','LIN_ZHONG','YOU_SHI_SZ','TU_RANG_LX','PINGJUN_SG','PO_DU','塔号']
   rows,w=m.prepare(h,[['02',.1,'0327','00004','242','410001','122',0,9,'T2'],['01',.2,'0327','00003','111','200000','122',None,4,'T1']])
   self.assertEqual(rows[0][6],'01');self.assertEqual(rows[0][13],'水源林');self.assertEqual(rows[0][16],'油松')
-  self.assertEqual(rows[1][4:6],['0327','00004']);self.assertEqual(rows[1][13],'242');self.assertEqual(rows[1][16],'410001');self.assertEqual(rows[1][27],'122')
+  self.assertEqual(rows[1][4:6],['0327','00004']);self.assertEqual(rows[1][13],'能源林');self.assertEqual(rows[1][16],'410001');self.assertEqual(rows[1][27],'122')
   self.assertEqual(rows[1][18],0);self.assertIsNone(rows[0][18]);self.assertEqual(rows[1][26],9)
   for i in (0,1,2,9,22,23,29,30,31):self.assertIsNone(rows[1][i])
+ def test_unknown_forest_type_stays_code(self):
+  rows,w=m.prepare(['小班编','面积','LIN_ZHONG'],[['1',.1,'999']])
+  self.assertEqual(rows[0][13],'999')
+  self.assertIn('Untranslated LIN_ZHONG: 999',w)
  def test_invalid_inputs(self):
   for h,rows in [(['小班编','TBMJ'],[['1',2]]),(['小班编','面积'],[['1',None]]),(['小班编','面积'],[['1',-1]]),(['小班编','面积'],[['1','NaN']]),(['小班编','面积'],[['1',1],['1',2]]),(['小班编','面积','面积'],[['1',1,2]]),(['小班编','面积'],[])]:
    with self.subTest(h=h,rows=rows):
