@@ -20,6 +20,13 @@ MAPS = {
     "PO_XIANG": dict(zip(map(str, range(1, 10)), ["北", "东北", "东", "东南", "南", "西南", "西", "西北", "无坡向"])),
     "PO_WEI": dict(zip(map(str, range(1, 7)), ["脊", "上", "中", "下", "谷", "平地"])),
 }
+# Confirmed template naming, not a cross-version statutory code table.
+LAND_TYPES = {
+    "水源林": "防护林林地", "水保林": "防护林林地", "防护林": "防护林林地",
+    "用材林": "用材林林地", "经济林": "经济林林地", "能源林": "能源林林地",
+    "薪炭林": "薪炭林林地", "特用林": "特用林林地", "特种用途林": "特用林林地",
+}
+SHRUB_NAMES = {"灌木林地", "一般灌木林地", "特殊灌木林地", "国家特别规定灌木林地"}
 FIELDS = {0: "市", 1: "县", 2: "乡", 3: "ZLDWMC", 4: "LIN_BAN", 5: "XIAO_BAN", 6: "小班编", 7: "面积", 8: "DLMC", 10: "LD_QS", 11: "SEN_LIN_LB", 12: "BH_DJ", 13: "LIN_ZHONG", 14: "QI_YUAN", 15: "STQWMC", 16: "YOU_SHI_SZ", 17: "LING_ZU", 18: "PINGJUN_SG", 19: "PINGJUN_XJ", 20: "YU_BI_DU", 21: "MEI_GQ_XJ", 24: "PO_XIANG", 25: "PO_WEI", 26: "PO_DU", 27: "TU_RANG_LX", 28: "TU_CENG_HD"}
 NUMERIC = {18, 19, 20, 21, 26, 28}
 
@@ -75,7 +82,7 @@ def prepare(headers, source_rows, *, area_field="面积", id_field="小班编", 
             elif field in MAPS:
                 raw = code(v)
                 row[col] = MAPS[field].get(raw, raw)
-                if raw not in MAPS[field]:
+                if raw not in MAPS[field] and not (field == "LIN_ZHONG" and raw in LAND_TYPES):
                     warnings.add(f"Untranslated {field}: {raw}")
             else:
                 row[col] = code(v)
@@ -85,6 +92,13 @@ def prepare(headers, source_rows, *, area_field="面积", id_field="小班编", 
                 row[col] = value
         tower = code(r.get("塔号"))
         row[32] = tower  # compact enough for the fixed Remarks column
+        if row[8] in SHRUB_NAMES:
+            row[8] = "一般灌木林地"
+        row[9] = "苗圃地" if row[8] == "苗圃地" else LAND_TYPES.get(row[13])
+        if row[9] is None:
+            warnings.add(f"小班{ident}：林种未匹配林地类型，保留林种原值，林地类型留空")
+        if row[21] is not None:
+            warnings.add("每公顷蓄积为源库参考值；不据此反算或覆盖核定小班蓄积")
         if code(r.get("DI_LEI")) == "030701":
             warnings.add("DI_LEI 030701: verify classification against the source dictionary; DLMC retained")
         result.append(row)

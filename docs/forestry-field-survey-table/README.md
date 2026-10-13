@@ -2,6 +2,8 @@
 
 [Skills index](../../README.md) | [简体中文](README.zh-CN.md)
 
+Land-use types follow the confirmed forest-purpose mapping, including energy forest land. Shrub categories use the general shrub label; existing public-benefit classifications are retained without additional authority splits. Unknown codes remain unchanged with an empty derived type. Source stock density is reference only. Post-survey summaries and fees are outside scope. Update through the original installer and preserve project workbooks.
+
 Prepare a fixed A.1 forestry field-survey workbook from `.xls` or `.xlsx`. The clean template is bundled. This skill covers pre-survey preparation only; post-survey sheets 1–6 are outside scope.
 
 ## Requirements and installation

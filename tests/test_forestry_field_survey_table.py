@@ -9,7 +9,7 @@ class SurveyTests(unittest.TestCase):
   self.assertEqual(rows[0][6],'01');self.assertEqual(rows[0][13],'水源林');self.assertEqual(rows[0][16],'油松')
   self.assertEqual(rows[1][4:6],['0327','00004']);self.assertEqual(rows[1][13],'能源林');self.assertEqual(rows[1][16],'410001');self.assertEqual(rows[1][27],'122')
   self.assertEqual(rows[1][18],0);self.assertIsNone(rows[0][18]);self.assertEqual(rows[1][26],9)
-  for i in (0,1,2,9,22,23,29,30,31):self.assertIsNone(rows[1][i])
+  for i in (0,1,2,22,23,29,30,31):self.assertIsNone(rows[1][i])
  def test_unknown_forest_type_stays_code(self):
   rows,w=m.prepare(['小班编','面积','LIN_ZHONG'],[['1',.1,'999']])
   self.assertEqual(rows[0][13],'999')
@@ -23,6 +23,22 @@ class SurveyTests(unittest.TestCase):
   self.assertEqual(rows[0][0:3],['已有市','已确认县',None]);self.assertEqual(rows[0][7],0)
  def test_default_output(self):
   self.assertEqual(m.default_output(pathlib.Path('/tmp/调查_初表.xls')).name,'调查_外调.xlsx')
+ def test_template_classification_and_reference_stock(self):
+  h=['小班编','面积','DLMC','LIN_ZHONG','SEN_LIN_LB','SHI_QUAN_D','MEI_GQ_XJ']
+  rows,w=m.prepare(h,[['1',.1,'灌木林地','242','012','20',50],['2',.2,'乔木林地','112','012','10',80]])
+  self.assertEqual(rows[0][8:10],['一般灌木林地','能源林林地'])
+  self.assertEqual(rows[1][9],'防护林林地');self.assertEqual(rows[0][11],'一般公益林')
+  self.assertEqual(rows[0][21],50)
+  for r in rows:self.assertIsNone(r[22])
+  self.assertFalse(any('SHI_QUAN_D' in x or '细分' in x or '未匹配林地类型' in x for x in w))
+ def test_names_nursery_and_unknown_types(self):
+  cases=[('一般灌木林地','经济林','经济林林地'),('特殊灌木林地','用材林','用材林林地'),('国家特别规定灌木林地','能源林','能源林林地'),('乔木林地','111','防护林林地'),('乔木林地','防护林','防护林林地'),('乔木林地','233','用材林林地'),('苗圃地',None,'苗圃地'),('其他林地','999',None)]
+  for land,forest,expected in cases:
+   with self.subTest(land=land,forest=forest):
+    rows,w=m.prepare(['小班编','面积','DLMC','LIN_ZHONG'],[['1',.1,land,forest]])
+    self.assertEqual(rows[0][9],expected)
+    if '灌木' in land:self.assertEqual(rows[0][8],'一般灌木林地')
+    if expected is None:self.assertEqual(rows[0][13],'999');self.assertTrue(any('未匹配林地类型' in x for x in w))
  def test_template_clean_and_styled(self):
   ns={'m':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
   with zipfile.ZipFile(SKILL/'assets/A.1.xlsx') as z:

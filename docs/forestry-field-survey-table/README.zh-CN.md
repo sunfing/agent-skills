@@ -4,6 +4,8 @@
 
 将 `.xls`、`.xlsx` 初表整理为固定 A.1 外调表。内置干净模板，不需要额外指定模板。仅整理外业前底表，外业后1—6号表另行处理。
 
+林地类型按已确认林种归并（水源林/水保林→防护林林地，能源林→能源林林地）；灌木类统一一般灌木林地，不追加公益林事权细分。未知林种保留代码且类型留空。源库蓄积仅作参考；本skill不处理外业后汇总或费用。更新通过原安装工具，保留项目成果。
+
 ## 环境与安装
 
 Windows + 桌面版 Microsoft Excel + Python 3.10 或更新版本，无需 pip 安装依赖。Excel 必须已完成首次运行和许可激活。通过 CC Switch 从本仓库安装 `forestry-field-survey-table`，或将 `skills/forestry-field-survey-table` 完整复制到客户端技能目录。保持 assets、scripts、references 一同安装。
