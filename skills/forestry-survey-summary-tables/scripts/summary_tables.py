@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-REPORT_NAMES = [f'B.{i}' for i in range(1, 8)] + ['小班明细']
+REPORT_NAMES = ['小班明细'] + [f'B.{i}' for i in range(1, 8)]
 REPLACED_NAMES = set(REPORT_NAMES) | {str(i) for i in range(1, 8)}
 NS = {'s': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
 TYPES = ['防护林林地', '特用林林地', '用材林林地', '经济林林地', '能源林林地', '苗圃地', '其他林地']
@@ -372,7 +372,8 @@ def build(records, cfg):
         s['table_last']=s['last']
         for note in [fee['basis'],fee['context'],fee['note']]:
             s['last']+=1;merge(s,f'A{s["last"]}:{col(nc)}{s["last"]}',note);s['heights'][str(s['last'])]=32
-    sheets.extend([s,detail])
+    sheets.append(s)
+    sheets.insert(0,detail)
     for s in sheets:
         s.setdefault('table_last',s['last'])
         for v in s['cells'].values():
@@ -421,6 +422,7 @@ def validate_candidate(source, candidate, payload):
     retained=[n for n in a if n not in REPLACED_NAMES]
     if set(b)!=set(retained)|set(REPORT_NAMES):raise ValueError('Unexpected worksheet set')
     if [n for n in b if n in REPORT_NAMES] != REPORT_NAMES:raise ValueError('Unexpected report order')
+    if list(b)[:9] != ['A.1'] + REPORT_NAMES:raise ValueError('A.1 must precede detail and B-series reports')
     verify_preserved(a,b,retained)
     for s in payload:
         sh=b[s['name']]

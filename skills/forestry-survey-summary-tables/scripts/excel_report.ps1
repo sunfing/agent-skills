@@ -10,7 +10,9 @@ try {
  # Replace the whole report set before writing formulas. Deleting an old sheet
  # detail after populating summaries would convert their new links to #REF!.
  foreach($ws in @($b.Worksheets)){if($ws.Name -in $j.replace_names){$ws.Delete()}}
- foreach($d in $j.sheets){$new=$b.Worksheets.Add($b.Worksheets.Item('A.1'));$new.Name=$d.name}
+ $anchor=$b.Worksheets.Item('A.1')
+ if($anchor.Index -ne 1){$anchor.Move($b.Worksheets.Item(1))}
+ foreach($d in $j.sheets){$new=$b.Worksheets.Add([Type]::Missing,$anchor);$new.Name=$d.name;$anchor=$new}
  foreach($d in $j.sheets){
   $s=$b.Worksheets.Item($d.name)
   $n=if($d.name -eq '小班明细'){8}else{[int]$d.name.Substring(2)};$last=[int]$d.last;$nc=[int]$d.cols;$head=[int]$d.head
@@ -122,7 +124,7 @@ try {
   }
   $s.ExportAsFixedFormat(0,(Join-Path $j.stage "$($d.name).pdf"))
  }
- $b.Worksheets.Item('B.1').Activate()
+ $b.Worksheets.Item('A.1').Activate()
  $b.SaveAs($j.candidate,51);$b.Close($false);$b=$null
  $b=$e.Workbooks.Open($j.candidate,0,$true)
  foreach($d in $j.sheets){
