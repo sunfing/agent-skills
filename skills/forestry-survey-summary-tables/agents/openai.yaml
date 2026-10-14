@@ -1,4 +1,4 @@
 interface:
   display_name: "Forestry Survey Summary Tables"
-  short_description: "Build report tables 1-7 from completed forestry surveys"
-  default_prompt: "使用 $forestry-survey-summary-tables 从已完善的 A.1 生成同一工作簿中的附表1—7，按项目确认口径汇总，保留原表，并检查报告打印版式后保存。"
+  short_description: "Build B.1-B.7 reports and parcel details from A.1 surveys"
+  default_prompt: "使用 $forestry-survey-summary-tables 从已完善的 A.1 生成同一工作簿中的附表 B.1—B.7 和小班明细，按项目确认口径汇总，保留原表，并检查报告打印版式后保存。"

@@ -8,18 +8,26 @@ try {
  $b=$e.Workbooks.Open($j.source,0,$true)
  $t=$e.Workbooks.Open($j.template,0,$true)
  # Replace the whole report set before writing formulas. Deleting an old sheet
- # 7 after populating sheets 1-6 would convert their new links to #REF!.
- foreach($ws in @($b.Worksheets)){if($ws.Name -in @('1','2','3','4','5','6','7')){$ws.Delete()}}
+ # detail after populating summaries would convert their new links to #REF!.
+ foreach($ws in @($b.Worksheets)){if($ws.Name -in $j.replace_names){$ws.Delete()}}
  foreach($d in $j.sheets){$new=$b.Worksheets.Add($b.Worksheets.Item('A.1'));$new.Name=$d.name}
  foreach($d in $j.sheets){
   $s=$b.Worksheets.Item($d.name)
-  $n=[int]$d.name;$last=[int]$d.last;$nc=[int]$d.cols;$head=[int]$d.head
+  $n=if($d.name -eq '小班明细'){8}else{[int]$d.name.Substring(2)};$last=[int]$d.last;$nc=[int]$d.cols;$head=[int]$d.head
   $ref=$t.Worksheets.Item($d.name)
-  if($n -ne 6){
+  if($n -eq 5){
+   # B.5 expands the template's ownership blocks for all actual land classes.
+   $ref.Range('A1:O6').Copy($s.Range('A1'))
+   $s.Range('A1:O6').UnMerge();$s.Range('A1:O6').ClearContents()
+   for($c=1;$c -le $nc;$c++){
+    $sc=if($c -le 3){$c}else{4}
+    $s.Columns.Item($c).ColumnWidth=$ref.Columns.Item($sc).ColumnWidth
+   }
+  }elseif($n -ne 7){
    $ref.Range($ref.Cells.Item(1,1),$ref.Cells.Item($head,$nc)).Copy($s.Range('A1'))
    for($c=1;$c -le $nc;$c++){$s.Columns.Item($c).ColumnWidth=$ref.Columns.Item($c).ColumnWidth}
   }else{
-   # Sheet 6 is a real template too. Keep the fixed administration columns and
+   # B.7 is a real template too. Keep the fixed administration columns and
    # repeat its first three-column fee block for the configured categories.
    $ref.Range('A1:AB7').Copy($s.Range('A1'))
    $s.Range('A1:AB7').UnMerge();$s.Range('A1:AB7').ClearContents()
@@ -40,6 +48,7 @@ try {
    if($null -eq $p.Value){continue}
    $cell=$s.Range($p.Name)
    if($p.Value -is [string] -and $p.Value.StartsWith('=')){$cell.Formula=$p.Value}
+   elseif($p.Value -is [int] -or $p.Value -is [long]){$cell.Value2=[double]$p.Value}
    else{$cell.Value2=$p.Value}
   }
   foreach($m in $d.merges){[void]$s.Range($m).Merge()}
@@ -50,9 +59,13 @@ try {
    $s.Rows.Item(1).RowHeight=20;$s.Rows.Item(2).RowHeight=20
    # The asset includes the correctly merged unit row.
   }elseif($n -eq 5){
+   for($r=1;$r -le $head;$r++){$s.Rows.Item($r).RowHeight=$ref.Rows.Item($r).RowHeight}
+   $s.Range($s.Cells.Item(7,1),$s.Cells.Item($last,$nc)).RowHeight=24
+   $s.Range('A3').MergeArea.HorizontalAlignment=-4152
+  }elseif($n -eq 6){
    $s.Rows.Item(1).RowHeight=36;$s.Rows.Item(2).RowHeight=18
    $s.Range('A3:K5').RowHeight=20;$s.Range("A6:K$last").RowHeight=24
-  }elseif($n -eq 6){
+  }elseif($n -eq 7){
    for($r=1;$r -le $head;$r++){$s.Rows.Item($r).RowHeight=$ref.Rows.Item($r).RowHeight}
    # Restore template typography after the common data-cell defaults. Header
    # merges/labels come from the project payload; formatting comes from Excel.
@@ -73,7 +86,7 @@ try {
    $s.Range("A4:AB$last").RowHeight=28
   }
   foreach($p in $d.heights.PSObject.Properties){$s.Rows.Item([int]$p.Name).RowHeight=[double]$p.Value}
-  $first=if($n -in 5,7){3}else{4}
+  $first=if($n -in 6,8){3}else{4}
   $table=$s.Range($s.Cells.Item($first,1),$s.Cells.Item([int]$d.table_last,$nc))
   $table.Borders.LineStyle=1;$table.Borders.Weight=2
   $s.PageSetup.PaperSize=9;$s.PageSetup.Orientation=$(if($n -le 4){1}else{2})
@@ -109,7 +122,7 @@ try {
   }
   $s.ExportAsFixedFormat(0,(Join-Path $j.stage "$($d.name).pdf"))
  }
- $b.Worksheets.Item('1').Activate()
+ $b.Worksheets.Item('B.1').Activate()
  $b.SaveAs($j.candidate,51);$b.Close($false);$b=$null
  $b=$e.Workbooks.Open($j.candidate,0,$true)
  foreach($d in $j.sheets){

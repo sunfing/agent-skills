@@ -14,6 +14,8 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+REPORT_NAMES = [f'B.{i}' for i in range(1, 8)] + ['小班明细']
+REPLACED_NAMES = set(REPORT_NAMES) | {str(i) for i in range(1, 8)}
 NS = {'s': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
 TYPES = ['防护林林地', '特用林林地', '用材林林地', '经济林林地', '能源林林地', '苗圃地', '其他林地']
 CLASSES = ['乔木林地', '竹林地', '国家特别规定灌木林地', '一般灌木林地', '疏林地', '未成林造林地', '苗圃地', '采伐迹地', '火烧迹地', '其他林地']
@@ -188,7 +190,7 @@ def aggregate(records, column):
     for row in rows:
         if terms and row == terms[-1][1] + 1: terms[-1][1] = row
         else: terms.append([row, row])
-    refs = [f"'7'!{column}{a}" + (f':{column}{b}' if a != b else '') for a, b in terms]
+    refs = [f"'小班明细'!{column}{a}" + (f':{column}{b}' if a != b else '') for a, b in terms]
     if not refs: return '=0'
     # Each SUM call stays below Excel's 255-argument limit.
     formula = '=' + '+'.join('SUM(' + ','.join(refs[i:i+200]) + ')' for i in range(0, len(refs), 200))
@@ -220,11 +222,48 @@ def labels(s, gs, own, start, shift):
             merge(s, f'{col(shift+len(g)-1)}{r}:{col(shift+len(g)-1)}{start+(end+1)*size-1}', g[-1])
 
 
+def cross_table(records, cfg):
+    """B.5: county/forest category by land class and ownership, area only."""
+    classes = CLASSES[:5] + [c for c in CLASSES[5:] if any(r['land_class'] == c for r in records)]
+    owners = ['国有', '集体'] + (['个人'] if any(r['own'] == '个人' for r in records) else [])
+    nc = 3 + (1 + len(classes)) * len(owners)
+    s = make_sheet('B.5', 6, nc)
+    merge(s, f'A1:{col(nc)}2', f'表B.5 {cfg["project_name"]}\n{cfg["use_nature"]}使用林地分森林类别按地类面积统计表')
+    merge(s, f'A3:{col(nc)}3', '单位：公顷')
+    merge(s, 'A4:A5', '县、林业局');merge(s, 'B4:C5', '森林类别')
+    setcell(s, 'A6', 1);merge(s, 'B6:C6', 2)
+    for k, lc in enumerate(['合计'] + classes):
+        c = 4 + k * len(owners)
+        merge(s, f'{col(c)}4:{col(c+len(owners)-1)}4', lc)
+        for j, owner in enumerate(owners):
+            setcell(s, f'{col(c+j)}5', owner);setcell(s, f'{col(c+j)}6', c+j-1)
+    counties = list(dict.fromkeys(r['admin'][:2] for r in records))
+    categories = [('小计', FORESTS[:5]), ('国家级公益林地', FORESTS[:3]),
+                  ('省级公益林地', FORESTS[3:4]), ('市县级公益林地', FORESTS[4:5]),
+                  ('小计', FORESTS[5:]), ('重点商品林地', FORESTS[5:6]), ('一般商品林地', FORESTS[6:])]
+    for i, county in enumerate([None] + counties):
+        start = 7 + 7*i
+        # Include city only when the same county name occurs in multiple cities.
+        name = '合计' if county is None else (''.join(county) if sum(c[1] == county[1] for c in counties) > 1 else county[1])
+        merge(s, f'A{start}:A{start+6}', name)
+        merge(s, f'B{start}:B{start+3}', '公益林地');merge(s, f'B{start+4}:B{start+6}', '商品林地')
+        for j, (label, forests) in enumerate(categories):
+            rr = start+j;setcell(s, f'C{rr}', label)
+            base = [r for r in records if (county is None or r['admin'][:2] == county) and r['forest_category'] in forests]
+            for k, lc in enumerate([None] + classes):
+                for h, owner in enumerate(owners):
+                    bucket = [r for r in base if r['own'] == owner and (lc is None or r['land_class'] == lc)]
+                    put_sum(s, f'{col(4+k*len(owners)+h)}{rr}', bucket)
+    s['last'] = 6+7*(1+len(counties))
+    s['formats'] = [(f'A6:{col(nc)}6', '0'), (f'D7:{col(nc)}{s["last"]}', '0.0000;-0.0000;;@')]
+    return s
+
+
 def build(records, cfg):
     gs = groups(records)
     # Same hierarchical nodes for the report detail, with leaf parcel rows.
-    detail = make_sheet(7, 3, 28)
-    merge(detail, 'A1:AB1', f'附表7 {cfg["project_name"]}\n{cfg["use_nature"]}使用林地小班因子调查表')
+    detail = make_sheet('小班明细', 3, 28)
+    merge(detail, 'A1:AB1', f'{cfg["project_name"]}\n{cfg["use_nature"]}使用林地小班因子调查表（小班明细）')
     row = 4
     nodes = []
     for g in gs:
@@ -268,8 +307,8 @@ def build(records, cfg):
     titles = ['按林地类型面积蓄积统计表', '按现状地类面积蓄积统计表', '按森林类别面积蓄积统计表', '按林地保护等级面积蓄积统计表']
     for n in range(1,5):
         head, nc = (7,17) if n==3 else (5,14 if n==1 else 17 if n==2 else 11)
-        s = make_sheet(n, head, nc)
-        setcell(s,'A1',f'附表{n} {cfg["project_name"]}\n{cfg["use_nature"]}使用林地{titles[n-1]}')
+        s = make_sheet(f'B.{n}', head, nc)
+        setcell(s,'A1',f'表B.{n} {cfg["project_name"]}\n{cfg["use_nature"]}使用林地{titles[n-1]}')
         for metric, offset in [('area',0), ('volume',size)]:
             start = head+1+offset
             labels(s,gs,own,start,2)
@@ -288,8 +327,9 @@ def build(records, cfg):
             s['formats'].append((f'G{start}:{col(nc)}{start+size-1}', '0.0000;-0.0000;;@' if metric=='area' else '0.0;-0.0;;@'))
         s['last'] = head+2*size
         sheets.append(s)
-    s = make_sheet(5,5,11)
-    setcell(s,'A1',f'附表5 {cfg["project_name"]}\n{cfg["use_nature"]}使用重点生态区域林地面积统计表')
+    sheets.append(cross_table(records, cfg))
+    s = make_sheet('B.6',5,11)
+    setcell(s,'A1',f'表B.6 {cfg["project_name"]}\n{cfg["use_nature"]}使用重点生态区域林地面积统计表')
     if cfg['ecology']['mode']=='none': setcell(s,'A6','不涉及');s['last']=6
     else:
         for rownum,reg in enumerate(cfg['ecology']['records'],6):
@@ -299,9 +339,9 @@ def build(records, cfg):
         s['last']=5+len(cfg['ecology']['records'])
     s['formats']=[(f'B6:J{s["last"]}', '0.0000;-0.0000;;@')];sheets.append(s)
     fee=cfg['fee'];cats=fee.get('categories',[]) if fee['mode']!='not_applicable' else []
-    fee_header=read_book(ROOT/'assets/report-headers.xlsx')['6']
-    nc=max(10,7+len(cats)*3);s=make_sheet(6,7,nc)
-    merge(s,f'A1:{col(nc)}2',f'附表6 {cfg["project_name"]}\n{cfg["use_nature"]}使用林地森林植被恢复费'+('参考测算表' if fee['mode']=='reference' else '测算表'))
+    fee_header=read_book(ROOT/'assets/report-headers.xlsx')['B.7']
+    nc=max(10,7+len(cats)*3);s=make_sheet('B.7',7,nc)
+    merge(s,f'A1:{col(nc)}2',f'表B.7 {cfg["project_name"]}\n{cfg["use_nature"]}使用林地森林植被恢复费'+('参考测算表' if fee['mode']=='reference' else '测算表'))
     merge(s,f'A3:{col(nc)}3','单位：面积—公顷；折算单价—元/平方米；金额—万元')
     if not cats:
         merge(s,f'A4:{col(nc)}7','不适用：'+fee['basis']);s['last']=7
@@ -378,8 +418,9 @@ def verify_preserved(before, after, retained):
 
 def validate_candidate(source, candidate, payload):
     a,b=read_book(source),read_book(candidate)
-    retained=[n for n in a if n not in {str(i) for i in range(1,8)}]
-    if set(b)!=set(retained)|{str(i) for i in range(1,8)}:raise ValueError('Unexpected worksheet set')
+    retained=[n for n in a if n not in REPLACED_NAMES]
+    if set(b)!=set(retained)|set(REPORT_NAMES):raise ValueError('Unexpected worksheet set')
+    if [n for n in b if n in REPORT_NAMES] != REPORT_NAMES:raise ValueError('Unexpected report order')
     verify_preserved(a,b,retained)
     for s in payload:
         sh=b[s['name']]
@@ -388,7 +429,7 @@ def validate_candidate(source, candidate, payload):
         for addr,v in s['cells'].items():
             actual=sh['cells'].get(addr,{})
             if isinstance(v,str) and v.startswith('='):
-                normalize_formula=lambda f:(f or '').replace("'A.1'!",'A.1!')
+                normalize_formula=lambda f:(f or '').replace("'A.1'!",'A.1!').replace("'小班明细'!",'小班明细!')
                 if normalize_formula(actual.get('formula'))!=normalize_formula(v[1:]):raise ValueError(f'Formula was not preserved: {addr}')
             elif actual.get('value') not in (v, '' if v is None else v):raise ValueError(f'Cell mismatch: {addr}')
         for addr,v in s['checks'].items():
@@ -429,13 +470,13 @@ def main():
     if output!=source and output.exists():ap.error('Separate output already exists')
     original=digest(source);book=read_book(source)
     if 'A.1' not in book:ap.error('A.1 worksheet missing')
-    if any(str(i) in book for i in range(1,8)) and not args.replace_sheets:ap.error('Existing report sheets require --replace-sheets after user authorization')
+    if REPLACED_NAMES.intersection(book) and not args.replace_sheets:ap.error('Existing legacy or B-series report sheets require --replace-sheets after user authorization')
     cfg=json.loads(args.config.read_text(encoding='utf-8-sig'))
     records=prepare(book,cfg);payload=build(records,cfg)
     stage=args.stage_dir.resolve() if args.stage_dir else Path(tempfile.mkdtemp(prefix='forestry-summary-'))
     if args.stage_dir:stage.mkdir(exist_ok=False,parents=True)
     candidate=stage/'candidate.xlsx'
-    job={'source':str(source),'template':str(ROOT/'assets/report-headers.xlsx'),'candidate':str(candidate),'stage':str(stage),'sheets':payload}
+    job={'source':str(source),'template':str(ROOT/'assets/report-headers.xlsx'),'candidate':str(candidate),'stage':str(stage),'sheets':payload,'replace_names':sorted(REPLACED_NAMES)}
     job_path=stage/'job.json';job_path.write_text(json.dumps(job,ensure_ascii=False),encoding='utf-8-sig')
     subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(ROOT/'scripts/excel_report.ps1'),'-Job',str(job_path)],check=True,timeout=600)
     validate_candidate(source,candidate,payload)
@@ -443,7 +484,7 @@ def main():
     m={'source':str(source),'output':str(output),'source_hash':original,'candidate_hash':digest(candidate),'records':len(records),'area_ha':expected(records,'area'),'volume_m3':expected(records,'volume')}
     manifest=stage/'stage.json';manifest.write_text(json.dumps(m,ensure_ascii=False,indent=2),encoding='utf-8')
     blanks=[h for idx,h in [(29,'建设内容'),(30,'工程类别')] if any(r['values'][idx] in (None,'') for r in records)]
-    print(json.dumps({**m,'stage_manifest':str(manifest),'review_pdfs':[str(stage/f'{i}.pdf') for i in range(1,8)],'blank_fields':blanks,'next':'Review all print PDFs, then --publish-stage'},ensure_ascii=False))
+    print(json.dumps({**m,'stage_manifest':str(manifest),'review_pdfs':[str(stage/f'{name}.pdf') for name in REPORT_NAMES],'blank_fields':blanks,'next':'Review all print PDFs, then --publish-stage'},ensure_ascii=False))
 
 
 if __name__=='__main__':main()
