@@ -48,7 +48,7 @@ class SurveyTests(unittest.TestCase):
    portable=importlib.util.module_from_spec(spec);spec.loader.exec_module(portable)
    rows,_=portable.prepare(['小班编','面积','LIN_ZHONG','YOU_SHI_SZ'],[['001',.1,'251','706000']])
    self.assertEqual(rows[0][6],'001');self.assertEqual(rows[0][16],'杏')
-   self.assertEqual(portable.ROOT,root)
+   self.assertEqual(portable.ROOT,root.resolve())
    for p in root.rglob('*'):
     if p.suffix in ('.md','.json','.py','.ps1','.yaml'):
      self.assertNotIn('ink.doro',p.read_text(encoding='utf-8-sig'))
