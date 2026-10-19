@@ -39,19 +39,32 @@ class SurveyTests(unittest.TestCase):
     self.assertEqual(rows[0][9],expected)
     if '灌木' in land:self.assertEqual(rows[0][8],'一般灌木林地')
     if expected is None:self.assertEqual(rows[0][13],'999');self.assertTrue(any('未匹配林地类型' in x for x in w))
+ def test_workflow_observations_are_independent(self):
+  headers=['小班编','面积','SHI_QUAN_D','LIN_ZHONG','PINGJUN_SG','YU_BI_DU']
+  raw=[['02',.1,'20','242',5,.15],['01',.2,'10','111',8,.7]]
+  rows,_=m.prepare(headers,raw)
+  sheets=m.workflow_rows(['_id']+headers[1:],raw,rows,'临时')
+  self.assertEqual([s['name'] for s in sheets],['原始因子表','外业调查表'])
+  original,field=[s['rows'] for s in sheets]
+  self.assertEqual([len(original[0]),len(field[0])],[35,37])
+  self.assertEqual(original[0][12],'国家公益林');self.assertEqual(original[1][12],'地方公益林')
+  self.assertEqual(original[1][22],.15);self.assertEqual(original[1][33],'临时')
+  for row in field:
+   for i in [3,13,17,19,21,25,27,29,31,33,35]:self.assertIsNone(row[i])
+  field[0][3]='疏林地';self.assertIsNone(original[0][8])
  def test_template_clean_and_styled(self):
   ns={'m':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
   with zipfile.ZipFile(SKILL/'assets/A.1.xlsx') as z:
    self.assertNotIn(b'absPath',z.read('xl/workbook.xml'))
-   wb=E.fromstring(z.read('xl/workbook.xml'));self.assertEqual([x.get('name') for x in wb.find('m:sheets',ns)],['A.1'])
+   wb=E.fromstring(z.read('xl/workbook.xml'));self.assertEqual([x.get('name') for x in wb.find('m:sheets',ns)],['原始因子表','外业调查表'])
    self.assertFalse(any('externalLink' in n or 'vbaProject' in n for n in z.namelist()))
-   sh=E.fromstring(z.read('xl/worksheets/sheet1.xml'))
-   for cell in sh.findall('.//m:sheetData/m:row/m:c',ns):
-    row=int(''.join(c for c in cell.get('r') if c.isdigit()))
-    if row>=4:self.assertIsNone(cell.find('m:v',ns));self.assertIsNone(cell.find('m:f',ns))
-   self.assertEqual({c.get('ref') for c in sh.findall('m:mergeCells/m:mergeCell',ns)},{'A1:AG1','A2:C2'})
-   strings=E.fromstring(z.read('xl/sharedStrings.xml'))
-   texts=[''.join(x.itertext()) for x in strings]
-   self.assertLessEqual(len(texts),35) # title, table label, 33 column labels only
-   self.assertIn('使用林地小班因子调查表',texts)
+   for i in (1,2):
+    sh=E.fromstring(z.read(f'xl/worksheets/sheet{i}.xml'))
+    self.assertIsNotNone(sh.find('m:pageSetup',ns))
+    for cell in sh.findall('.//m:sheetData/m:row/m:c',ns):
+     row=int(''.join(c for c in cell.get('r') if c.isdigit()))
+     if row>=4:self.assertIsNone(cell.find('m:v',ns));self.assertIsNone(cell.find('m:f',ns))
+   strings=E.fromstring(z.read('xl/sharedStrings.xml'));texts=[''.join(x.itertext()) for x in strings]
+   self.assertNotIn('旧编号',texts)
+   self.assertFalse(any('三家' in x or '承德' in x for x in texts))
 if __name__=='__main__':unittest.main()

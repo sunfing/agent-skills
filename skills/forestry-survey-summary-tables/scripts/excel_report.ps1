@@ -1,140 +1,103 @@
 ﻿param([Parameter(Mandatory=$true)][string]$Job)
 $ErrorActionPreference='Stop'
 $j=Get-Content -LiteralPath $Job -Raw -Encoding UTF8 | ConvertFrom-Json
-$e=$null;$b=$null;$t=$null
+$e=$null;$b=$null;$t=$null;$fontChecks=@()
 try {
  $e=New-Object -ComObject Excel.Application
- $e.Visible=$false;$e.DisplayAlerts=$false;$e.EnableEvents=$false;$e.AutomationSecurity=3
+ $e.Visible=$false;$e.DisplayAlerts=$false;$e.EnableEvents=$false;$e.ScreenUpdating=$false;$e.AutomationSecurity=3
  $b=$e.Workbooks.Open($j.source,0,$true)
  $t=$e.Workbooks.Open($j.template,0,$true)
- # Replace the whole report set before writing formulas. Deleting an old sheet
- # detail after populating summaries would convert their new links to #REF!.
+ $e.Calculation=-4135
  foreach($ws in @($b.Worksheets)){if($ws.Name -in $j.replace_names){$ws.Delete()}}
- $anchor=$b.Worksheets.Item('A.1')
- if($anchor.Index -ne 1){$anchor.Move($b.Worksheets.Item(1))}
- foreach($d in $j.sheets){$new=$b.Worksheets.Add([Type]::Missing,$anchor);$new.Name=$d.name;$anchor=$new}
+ $anchor=$b.Worksheets.Item($b.Worksheets.Count)
+ foreach($d in $j.sheets){$s=$b.Worksheets.Add([Type]::Missing,$anchor);$s.Name=$d.name;$anchor=$s}
  foreach($d in $j.sheets){
-  $s=$b.Worksheets.Item($d.name)
-  $n=if($d.name -eq '小班明细'){8}else{[int]$d.name.Substring(2)};$last=[int]$d.last;$nc=[int]$d.cols;$head=[int]$d.head
-  $ref=$t.Worksheets.Item($d.name)
-  if($n -eq 5){
-   # B.5 expands the template's ownership blocks for all actual land classes.
-   $ref.Range('A1:O6').Copy($s.Range('A1'))
-   $s.Range('A1:O6').UnMerge();$s.Range('A1:O6').ClearContents()
-   for($c=1;$c -le $nc;$c++){
-    $sc=if($c -le 3){$c}else{4}
-    $s.Columns.Item($c).ColumnWidth=$ref.Columns.Item($sc).ColumnWidth
-   }
-  }elseif($n -ne 7){
-   $ref.Range($ref.Cells.Item(1,1),$ref.Cells.Item($head,$nc)).Copy($s.Range('A1'))
-   for($c=1;$c -le $nc;$c++){$s.Columns.Item($c).ColumnWidth=$ref.Columns.Item($c).ColumnWidth}
-  }else{
-   # B.7 is a real template too. Keep the fixed administration columns and
-   # repeat its first three-column fee block for the configured categories.
-   $ref.Range('A1:AB7').Copy($s.Range('A1'))
-   $s.Range('A1:AB7').UnMerge();$s.Range('A1:AB7').ClearContents()
-   if($nc -lt 28){$s.Range($s.Cells.Item(1,$nc+1),$s.Cells.Item(7,28)).Clear()}
-   for($c=1;$c -le $nc;$c++){
-    $sc=if($c -le 7){$c}else{8+(($c-8)%3)}
-    $s.Columns.Item($c).ColumnWidth=$ref.Columns.Item($sc).ColumnWidth
-   }
+  $s=$b.Worksheets.Item($d.name);$ref=$t.Worksheets.Item($d.name)
+  $nc=[int]$d.cols;$head=[int]$d.head;$last=[int]$d.last
+  [void]$ref.Range($ref.Cells.Item(1,1),$ref.Cells.Item($head,$nc)).Copy($s.Range('A1'))
+  if($d.name -eq 'B.5'){$s.UsedRange.UnMerge();$s.UsedRange.ClearContents()}
+  for($c=1;$c -le $nc;$c++){
+   $sc=if($d.name -eq 'B.5' -and $c -gt 3){4}else{$c}
+   $s.Columns.Item($c).ColumnWidth=$ref.Columns.Item($sc).ColumnWidth
   }
-  $all=$s.Range($s.Cells.Item(1,1),$s.Cells.Item($last,$nc))
-  $all.Font.Name='宋体';$all.Font.Size=8;$all.Font.Bold=$false
-  $all.Interior.Pattern=-4142;$all.HorizontalAlignment=-4108;$all.VerticalAlignment=-4108;$all.WrapText=$true
-  $all.RowHeight=18
-  # Text-formatted template cells would display formula strings. Set a numeric
-  # format before writing .Formula; text results still preserve leading zeros.
-  $all.NumberFormat='0.########'
+  for($r=1;$r -le $head;$r++){$s.Rows.Item($r).RowHeight=$ref.Rows.Item($r).RowHeight}
+  if($last -gt $head){
+   $sr=if($d.name -eq 'A.1'){9}else{$head+1}
+   for($r=$head+1;$r -le $last;$r++){
+    [void]$ref.Range($ref.Cells.Item($sr,1),$ref.Cells.Item($sr,$nc)).Copy($s.Cells.Item($r,1))
+    $s.Rows.Item($r).RowHeight=$ref.Rows.Item($sr).RowHeight
+   }
+   $body=$s.Range($s.Cells.Item($head+1,1),$s.Cells.Item($last,$nc))
+   $body.UnMerge();$body.ClearContents();$body.NumberFormat='0.########;-0.########;;@'
+  }
   foreach($p in $d.cells.PSObject.Properties){
    if($null -eq $p.Value){continue}
    $cell=$s.Range($p.Name)
-   if($p.Value -is [string] -and $p.Value.StartsWith('=')){$cell.Formula=$p.Value}
-   elseif($p.Value -is [int] -or $p.Value -is [long]){$cell.Value2=[double]$p.Value}
-   else{$cell.Value2=$p.Value}
+   # Keep each merged cell's numeric/date format independent.
+   if($p.Value -is [string] -and $p.Value.StartsWith('=')){$cell.MergeArea.NumberFormat='0.########';$cell.Formula=$p.Value}
+   elseif($p.Value -is [string]){$cell.Value2=$p.Value}
+   else{$cell.Value2=[double]$p.Value}
   }
   foreach($m in $d.merges){[void]$s.Range($m).Merge()}
   foreach($f in $d.formats){$s.Range($f[0]).NumberFormat=$f[1]}
-  $s.Range('A1').MergeArea.Font.Size=11;$s.Range('A1').MergeArea.Font.Bold=$true
-  if($n -le 4){
-   for($r=3;$r -le $head;$r++){$s.Rows.Item($r).RowHeight=$ref.Rows.Item($r).RowHeight}
-   $s.Rows.Item(1).RowHeight=20;$s.Rows.Item(2).RowHeight=20
-   # The asset includes the correctly merged unit row.
-  }elseif($n -eq 5){
-   for($r=1;$r -le $head;$r++){$s.Rows.Item($r).RowHeight=$ref.Rows.Item($r).RowHeight}
-   $s.Range($s.Cells.Item(7,1),$s.Cells.Item($last,$nc)).RowHeight=24
-   $s.Range('A3').MergeArea.HorizontalAlignment=-4152
-  }elseif($n -eq 6){
-   $s.Rows.Item(1).RowHeight=36;$s.Rows.Item(2).RowHeight=18
-   $s.Range('A3:K5').RowHeight=20;$s.Range("A6:K$last").RowHeight=24
-  }elseif($n -eq 7){
-   for($r=1;$r -le $head;$r++){$s.Rows.Item($r).RowHeight=$ref.Rows.Item($r).RowHeight}
-   # Restore template typography after the common data-cell defaults. Header
-   # merges/labels come from the project payload; formatting comes from Excel.
-   for($r=1;$r -le $head;$r++){for($c=1;$c -le $nc;$c++){
-    $sc=if($c -le 7){$c}else{8+(($c-8)%3)}
-    $from=$ref.Cells.Item($r,$sc);$to=$s.Cells.Item($r,$c)
-    $to.Font.Name=$from.Font.Name;$to.Font.Size=$from.Font.Size;$to.Font.Bold=$from.Font.Bold
-   }}
-   $s.Range('A1').MergeArea.Font.Name=$ref.Range('A1').Font.Name
-   $s.Range('A1').MergeArea.Font.Size=$ref.Range('A1').Font.Size
-   $s.Range('A1').MergeArea.Font.Bold=$ref.Range('A1').Font.Bold
-   $s.Range('A3').MergeArea.HorizontalAlignment=-4152
-  }else{
-   $s.Columns.Item('F').ColumnWidth=7;$s.Columns.Item('L').ColumnWidth=8
-   $s.Columns.Item('P').ColumnWidth=5;$s.Columns.Item('I').ColumnWidth=8
-   $s.Columns.Item('J').ColumnWidth=7;$s.Columns.Item('AB').ColumnWidth=5
-   $s.Rows.Item(1).RowHeight=34;$s.Rows.Item(2).RowHeight=8;$s.Rows.Item(3).RowHeight=42
-   $s.Range("A4:AB$last").RowHeight=28
-  }
   foreach($p in $d.heights.PSObject.Properties){$s.Rows.Item([int]$p.Name).RowHeight=[double]$p.Value}
-  $first=if($n -in 6,8){3}else{4}
-  $table=$s.Range($s.Cells.Item($first,1),$s.Cells.Item([int]$d.table_last,$nc))
-  $table.Borders.LineStyle=1;$table.Borders.Weight=2
-  $s.PageSetup.PaperSize=9;$s.PageSetup.Orientation=$(if($n -le 4){1}else{2})
-  $s.PageSetup.Zoom=$false;$s.PageSetup.FitToPagesWide=1;$s.PageSetup.FitToPagesTall=$false
+  if(-not $d.preserve_body){
+   $first=if($d.name -in @('A.1','B.6')){3}else{4}
+   $table=$s.Range($s.Cells.Item($first,1),$s.Cells.Item([int]$d.table_last,$nc))
+   $table.Borders.LineStyle=1;$table.Borders.Weight=2
+  }
+  $all=$s.Range($s.Cells.Item(1,1),$s.Cells.Item($last,$nc));$all.Interior.Pattern=-4142
+  foreach($prop in @('PaperSize','Orientation','Zoom','FitToPagesWide','FitToPagesTall','LeftMargin','RightMargin','TopMargin','BottomMargin','HeaderMargin','FooterMargin','CenterHorizontally','CenterVertically','PrintTitleRows','PrintTitleColumns','LeftHeader','CenterHeader','RightHeader','LeftFooter','CenterFooter','RightFooter')){$s.PageSetup.$prop=$ref.PageSetup.$prop}
   $s.PageSetup.PrintArea=$all.Address()
-  $s.PageSetup.PrintTitleRows='$1:$'+$head
-  $s.PageSetup.LeftMargin=$e.CentimetersToPoints(1);$s.PageSetup.RightMargin=$e.CentimetersToPoints(1)
-  $s.PageSetup.TopMargin=$e.CentimetersToPoints(1.2);$s.PageSetup.BottomMargin=$e.CentimetersToPoints(1.2)
-  $s.PageSetup.CenterHorizontally=$true;$s.PageSetup.CenterVertically=$false
+  $addresses=if($d.name -eq '现状调查表'){@('A1','D3','D7')}else{@('A1')}
+  foreach($address in $addresses){
+   $font=$ref.Range($address).Font
+   $fontChecks+=@{sheet=$d.name;address=$address;name=$font.Name;size=$font.Size;bold=$font.Bold}
+  }
   $b.Activate();$s.Activate();$e.ActiveWindow.View=2;$e.ActiveWindow.Zoom=100
  }
- $t.Close($false);$t=$null
- $e.CalculateFullRebuild()
- foreach($d in $j.sheets){
-  $s=$b.Worksheets.Item($d.name);$s.Activate();$s.DisplayPageBreaks=$true
-  $cuts=@($s.HPageBreaks | ForEach-Object {$_.Location.Row})
-  # A vertically merged label can be clipped or disappear on the next printed
-  # page. Split it at actual Excel page boundaries and repeat the same label.
-  foreach($cut in $cuts){
-   for($c=1;$c -le [int]$d.cols;$c++){
-    $cell=$s.Cells.Item([int]$cut,$c)
-    if(-not $cell.MergeCells){continue}
-    $m=$cell.MergeArea;$top=$m.Row;$left=$m.Column;$bottom=$top+$m.Rows.Count-1;$right=$left+$m.Columns.Count-1
-    if($top -lt $cut -and $bottom -ge $cut){
-     $label=$m.Cells.Item(1,1).Value2;$m.UnMerge()
-     foreach($part in @(@($top,($cut-1)),@($cut,$bottom))){
-      $q=$s.Range($s.Cells.Item([int]$part[0],$left),$s.Cells.Item([int]$part[1],$right))
-      [void]$q.Merge();$q.Cells.Item(1,1).Value2=$label
-     }
-    }
-    $c=$right
-   }
-  }
-  $s.ExportAsFixedFormat(0,(Join-Path $j.stage "$($d.name).pdf"))
- }
- $b.Worksheets.Item('A.1').Activate()
- $b.SaveAs($j.candidate,51);$b.Close($false);$b=$null
- $b=$e.Workbooks.Open($j.candidate,0,$true)
+ $order=@($j.input_names)+@($j.sheets | ForEach-Object {$_.name})
+ for($i=$order.Count-1;$i -ge 0;$i--){$s=$b.Worksheets.Item($order[$i]);if($s.Index -ne 1){$s.Move($b.Worksheets.Item(1))}}
+ # Named-style font IDs can collide when copying between native workbooks.
+ # Apply template fonts explicitly after all copies, before export/save.
  foreach($d in $j.sheets){
   $s=$b.Worksheets.Item($d.name)
+  foreach($f in $d.font_formats){$font=$s.Range($f[0]).Font;$font.Name=$f[1];$font.Size=[double]$f[2];$font.Bold=[bool]$f[3];$font.Italic=[bool]$f[4]}
+ }
+ $t.Close($false);$t=$null;$e.Calculation=-4105;$e.CalculateFullRebuild()
+ foreach($d in $j.sheets){$b.Worksheets.Item($d.name).ExportAsFixedFormat(0,(Join-Path $j.stage "$($d.name).pdf"))}
+ $b.Worksheets.Item('内业处理表').Activate()
+ $b.SaveAs($j.candidate,51);$b.Close($false);$b=$null
+ $b=$e.Workbooks.Open($j.candidate,0,$true)
+ foreach($check in $fontChecks){
+  $font=$b.Worksheets.Item($check.sheet).Range($check.address).Font
+  if($font.Name -ne $check.name -or $font.Size -ne $check.size -or $font.Bold -ne $check.bold){throw "Template font changed: $($check.sheet)!$($check.address)"}
+ }
+ foreach($d in $j.sheets){
+  $s=$b.Worksheets.Item($d.name)
+  $range=$s.Range($s.Cells.Item(1,1),$s.Cells.Item([int]$d.last,[int]$d.cols))
+  $cached=$range.Value2;$formulas=$range.Formula
   foreach($p in $d.checks.PSObject.Properties){
-   $v=$s.Range($p.Name).Value2
-   if($v -isnot [double] -or [Math]::Abs($v-[double]$p.Value) -gt 0.00000001){throw "Excel total mismatch: $($d.name)!$($p.Name)"}
+   $match=[regex]::Match($p.Name,'^([A-Z]+)([0-9]+)$');$c=0
+   foreach($ch in $match.Groups[1].Value.ToCharArray()){$c=$c*26+[int]$ch-64}
+   $v=$cached[[int]$match.Groups[2].Value,$c]
+   if($v -isnot [double] -or [Math]::Abs($v-[double]$p.Value) -gt 0.00000001){throw "Excel total mismatch: $($d.name)!$($p.Name): $v vs $($p.Value)"}
+  }
+  foreach($p in $d.cells.PSObject.Properties){
+   if($p.Value -is [string] -and $p.Value.StartsWith('=')){
+    $match=[regex]::Match($p.Name,'^([A-Z]+)([0-9]+)$');$c=0
+    foreach($ch in $match.Groups[1].Value.ToCharArray()){$c=$c*26+[int]$ch-64}
+    $actual=$formulas[[int]$match.Groups[2].Value,$c] -replace "'(?<name>A\.1|B\.7|内业处理表)'!",'${name}!'
+    $expected=$p.Value -replace "'(?<name>A\.1|B\.7|内业处理表)'!",'${name}!'
+    if($actual -ne $expected){throw "Formula mismatch: $($d.name)!$($p.Name)"}
+   }
   }
  }
- Write-Output 'Excel save, reopen, and subtotal verification passed'
+ Write-Output 'Excel save, reopen, formula and subtotal verification passed'
+}catch{
+ Write-Output "Sheet: $($d.name); cell: $($p.Name)"
+ Write-Output $_.InvocationInfo.PositionMessage
+ throw
 }finally{
  if($t){$t.Close($false)};if($b){$b.Close($false)}
  if($e){$e.Quit();[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($e)}

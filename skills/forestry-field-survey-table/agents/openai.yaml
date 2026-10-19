@@ -1,4 +1,4 @@
 interface:
   display_name: "Forestry Field Survey Table"
-  short_description: "Prepare forestry field survey tables using the fixed A.1 template"
-  default_prompt: "使用 $forestry-field-survey-table 将指定小班因子初表整理为同目录下的 A.1 外调表，保留固定模板格式并通过 Excel 重新打开验证。"
+  short_description: "Prepare independent source and field observation tables"
+  default_prompt: "使用 $forestry-field-survey-table 将初表整理为原始因子表和外业调查表，实测栏留空，保留模板并通过Excel重开验证。"

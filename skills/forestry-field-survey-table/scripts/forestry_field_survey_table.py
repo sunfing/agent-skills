@@ -1,4 +1,4 @@
-"""Prepare the fixed A.1 field survey workbook using desktop Excel (stdlib only)."""
+"""Prepare independent source-factor and field-survey sheets using desktop Excel."""
 import argparse
 from decimal import Decimal, InvalidOperation
 import hashlib
@@ -113,6 +113,27 @@ def default_output(source):
     stem = source.stem
     return source.with_name((stem[:-3] if stem.endswith("_初表") else stem) + "_外调.xlsx")
 
+
+def workflow_rows(headers, source_rows, rows, use_nature=None):
+    """Keep the source snapshot separate from blank on-site observation columns."""
+    by_id = {code(r[headers.index('_id')]): dict(zip(headers, r)) for r in source_rows
+             if code(r[headers.index('_id')])}
+    original, field = [], []
+    for old in rows:
+        raw = by_id[old[6]]
+        authority = code(raw.get('SHI_QUAN_D'))
+        authority = {'10': '国家公益林', '20': '地方公益林'}.get(authority, authority)
+        # A:AI; no project-specific old parcel number, no inferred stock/count.
+        r = old[:12] + [authority] + old[12:18] + [None] + old[18:]
+        r[33] = use_nature
+        original.append(r)
+        # Second of each paired column is deliberately blank for field entry.
+        indices = [6,7,8,None,9,10,11,12,13,14,15,16,17,None,18,19,
+                   20,None,21,None,22,None,23,24,25,None,26,None,27,None,
+                   28,None,29,None,30,None,34]
+        field.append([None if i is None else r[i] for i in indices])
+    return [{'name': '原始因子表', 'rows': original}, {'name': '外业调查表', 'rows': field}]
+
 def excel(job, tmp):
     request = Path(tmp) / "job.json"
     request.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8-sig")
@@ -128,6 +149,7 @@ def main():
     ap.add_argument("--city")
     ap.add_argument("--county")
     ap.add_argument("--township")
+    ap.add_argument("--use-nature", choices=['临时', '永久'], help='Confirmed use nature; blank if omitted')
     ap.add_argument("--check-only", action="store_true")
     args = ap.parse_args()
     if os.name != "nt":
@@ -146,9 +168,12 @@ def main():
         excel({"mode": "read", "input": str(source), "sheet": args.sheet, "result": str(raw)}, tmp)
         data = json.loads(raw.read_text(encoding="utf-8-sig"))
         rows, warnings = prepare(data["headers"], data["rows"], area_field=args.area_field, id_field=args.id_field, city=args.city, county=args.county, township=args.township)
+        headers = [clean(h) for h in data['headers']]
+        headers[headers.index(args.id_field)] = '_id'
+        sheets = workflow_rows(headers, data['rows'], rows, args.use_nature)
         if not args.check_only:
             staging = Path(tmp) / "validated.xlsx"
-            excel({"mode": "write", "template": str(ROOT / "assets/A.1.xlsx"), "output": str(staging), "rows": rows}, tmp)
+            excel({"mode": "write", "template": str(ROOT / "assets/A.1.xlsx"), "output": str(staging), "sheets": sheets}, tmp)
             if hashlib.sha256(source.read_bytes()).digest() != original:
                 raise RuntimeError("Source changed during processing; output not published")
             # Exclusive creation prevents racing an existing user workbook.
