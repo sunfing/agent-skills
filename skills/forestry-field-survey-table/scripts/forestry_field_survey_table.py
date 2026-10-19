@@ -176,6 +176,7 @@ def main():
     ap.add_argument("--city")
     ap.add_argument("--county")
     ap.add_argument("--township")
+    ap.add_argument("--project-name", help="Confirmed full project name for worksheet titles")
     ap.add_argument("--use-nature", choices=['临时', '永久'], help='Confirmed use nature; blank if omitted')
     ap.add_argument("--soil-dictionary", choices=["revision-reference"], help="Enable bundled soil names only after source-version confirmation")
     ap.add_argument("--check-only", action="store_true")
@@ -199,6 +200,10 @@ def main():
         headers = [clean(h) for h in data['headers']]
         headers[headers.index(args.id_field)] = '_id'
         sheets = workflow_rows(headers, data['rows'], rows, args.use_nature)
+        project_name = (args.project_name or '').strip()
+        for sheet in sheets:
+            sheet['title'] = ' '.join(filter(None, [project_name or '建设项目',
+                (args.use_nature or '') + '使用林地', sheet['name']]))
         if not args.check_only:
             staging = Path(tmp) / "validated.xlsx"
             excel({"mode": "write", "template": str(ROOT / "assets/A.1.xlsx"), "output": str(staging), "sheets": sheets}, tmp)

@@ -35,6 +35,7 @@ try {
             if($n -lt 1){throw 'No rows'}
             $last=$n+3;$oldlast=$s.UsedRange.Rows.Count
             $height=$s.Rows.Item(4).RowHeight
+            $headerHeight=$s.Rows.Item(3).RowHeight
             $s.Range($s.Cells.Item(4,1),$s.Cells.Item([Math]::Max($last,$oldlast),$nc)).ClearContents()
             if($last -gt 4){$s.Range($s.Cells.Item(4,1),$s.Cells.Item(4,$nc)).Copy($s.Range($s.Cells.Item(5,1),$s.Cells.Item($last,$nc)))}
             if($oldlast -gt $last){$s.Range($s.Cells.Item($last+1,1),$s.Cells.Item($oldlast,$nc)).Clear()}
@@ -44,8 +45,27 @@ try {
                 if($null -eq $v){continue}
                 if($v -is [string]){$cell.NumberFormat='@';$cell.Value2=[string]$v}else{$cell.Value2=[double]$v}
             }}
-            # Preserve the approved compact widths and row heights; no autofit,
-            # horizontal rescaling or automatic continuation-page design.
+            $s.Cells.Item(1,1).Value2=[string]$d.title
+            # Fit headers and data only, excluding merged title/subtitle rows.
+            # Excel AutoFit ignores wrapped cells; restore wrapping afterwards.
+            for($c=1;$c -le $nc;$c++){
+                $range=$s.Range($s.Cells.Item(3,$c),$s.Cells.Item($last,$c))
+                $wrap=$range.WrapText
+                $wraps=@()
+                if($null -eq $wrap){for($r=3;$r -le $last;$r++){$wraps+= [bool]$s.Cells.Item($r,$c).WrapText}}
+                $range.WrapText=$false
+                $range.Columns.AutoFit() | Out-Null
+                if($null -eq $wrap){for($r=3;$r -le $last;$r++){$s.Cells.Item($r,$c).WrapText=$wraps[$r-3]}}
+                else{$range.WrapText=$wrap}
+            }
+            if($d.name -eq '外业调查表'){
+                $s.Columns.Item(4).ColumnWidth=10
+                $s.Columns.Item(14).ColumnWidth=10
+                $s.Columns.Item(37).ColumnWidth=15
+            }
+            # Wrapping can change row height; keep the template heights.
+            $s.Rows.Item(3).RowHeight=$headerHeight
+            $s.Range($s.Cells.Item(4,1),$s.Cells.Item($last,$nc)).RowHeight=$height
             $s.PageSetup.PrintArea=$s.Range($s.Cells.Item(1,1),$s.Cells.Item($last,$nc)).Address()
         }
         $book.Worksheets.Item(1).Activate()
@@ -55,6 +75,12 @@ try {
         if($book.Worksheets.Count -ne 2){throw 'Expected source and field sheets'}
         foreach($d in $j.sheets){
             $s=$book.Worksheets.Item($d.name)
+            if([string]$s.Cells.Item(1,1).Value2 -cne $d.title){throw 'Title mismatch'}
+            if($d.name -eq '外业调查表'){
+                foreach($pair in @(@(4,10),@(14,10),@(37,15))){
+                    if([Math]::Abs($s.Columns.Item($pair[0]).ColumnWidth-$pair[1]) -gt 0.1){throw 'Fixed column width mismatch'}
+                }
+            }
             for($r=0;$r -lt $d.rows.Count;$r++){for($c=0;$c -lt $d.rows[$r].Count;$c++){
                 $expected=$d.rows[$r][$c];$cell=$s.Cells.Item($r+4,$c+1);$actual=$cell.Value2
                 if($cell.HasFormula){throw 'Source and field sheets must be independent'}
