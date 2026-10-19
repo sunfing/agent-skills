@@ -60,12 +60,24 @@ try {
             }
             if($d.name -eq '外业调查表'){
                 $s.Columns.Item(4).ColumnWidth=10
-                $s.Columns.Item(14).ColumnWidth=10
-                $s.Columns.Item(37).ColumnWidth=15
+                $s.Columns.Item(11).ColumnWidth=10
+                foreach($c in @(13,14,16,17,18,19,20,21)){$s.Columns.Item($c).ColumnWidth=3.5}
+                $s.Columns.Item(22).ColumnWidth=15
             }
-            # Wrapping can change row height; keep the template heights.
-            $s.Rows.Item(3).RowHeight=$headerHeight
-            $s.Range($s.Cells.Item(4,1),$s.Cells.Item($last,$nc)).RowHeight=$height
+            # Keep source heights; field rows follow the compact layout.
+            if($d.name -eq '外业调查表'){
+                $s.Rows.Item(1).RowHeight=20
+                $s.Rows.Item(3).AutoFit() | Out-Null
+                # Native AutoFit can clip CJK glyphs in multiline headers.
+                $s.Rows.Item(3).RowHeight=$s.Rows.Item(3).RowHeight+6
+                $s.Range($s.Cells.Item(4,1),$s.Cells.Item($last,$nc)).RowHeight=20
+                # Subtitle is merged; measure its short text before remerging.
+                $subtitle=$s.Cells.Item(2,1).MergeArea
+                $subtitle.UnMerge();$s.Rows.Item(2).AutoFit() | Out-Null;$subtitle.Merge()
+            }else{
+                $s.Rows.Item(3).RowHeight=$headerHeight
+                $s.Range($s.Cells.Item(4,1),$s.Cells.Item($last,$nc)).RowHeight=$height
+            }
             $s.PageSetup.PrintArea=$s.Range($s.Cells.Item(1,1),$s.Cells.Item($last,$nc)).Address()
         }
         $book.Worksheets.Item(1).Activate()
@@ -75,9 +87,14 @@ try {
         if($book.Worksheets.Count -ne 2){throw 'Expected source and field sheets'}
         foreach($d in $j.sheets){
             $s=$book.Worksheets.Item($d.name)
+            if($s.Cells.Item(3,$d.rows[0].Count+1).Value2){throw 'Unexpected extra header'}
             if([string]$s.Cells.Item(1,1).Value2 -cne $d.title){throw 'Title mismatch'}
             if($d.name -eq '外业调查表'){
-                foreach($pair in @(@(4,10),@(14,10),@(37,15))){
+                if($s.Rows.Item(1).RowHeight -ne 20){throw 'Field title height mismatch'}
+                for($r=4;$r -le $d.rows.Count+3;$r++){
+                    if($s.Rows.Item($r).RowHeight -ne 20){throw 'Field data height mismatch'}
+                }
+                foreach($pair in @(@(4,10),@(11,10),@(13,3.5),@(14,3.5),@(16,3.5),@(17,3.5),@(18,3.5),@(19,3.5),@(20,3.5),@(21,3.5),@(22,15))){
                     if([Math]::Abs($s.Columns.Item($pair[0]).ColumnWidth-$pair[1]) -gt 0.1){throw 'Fixed column width mismatch'}
                 }
             }

@@ -258,10 +258,15 @@ def base_criteria(g,owner='计'):
     return list(zip('ABCD',g))+([('K',owner)] if owner!='计' else [])
 
 
+def report_title(cfg, label, table=None):
+    title = f'{text(cfg["project_name"])} {cfg["use_nature"]}使用林地 {label}'
+    return title + (f'（表{table}）' if table else '')
+
+
 def build(records,cfg):
     columns=cfg['_columns'];gs=groups(records)
     detail=make_sheet('A.1',3,28);detail['last']=3+len(gs)+len(records)
-    detail['cells']['A1']=f'表A.1 {cfg["use_nature"]}使用林地小班因子调查表'
+    detail['cells']['A1']=report_title(cfg,'小班因子调查表','A.1')
     totals=Totals(records,detail['last']);rr=4
     # Administrative layout is rebuilt on regrouping; classifications stay live.
     group_rows={}
@@ -312,7 +317,7 @@ def build(records,cfg):
     titles=['林地类型','现状地类','森林类别','林地保护等级']
     for n in range(1,5):
         head,nc=(7,17) if n==3 else (5,14 if n==1 else 17 if n==2 else 11)
-        s=make_sheet(f'B.{n}',head,nc);s['cells']['A1']=f'表B.{n} {cfg["use_nature"]}使用林地按{titles[n-1]}面积与蓄积统计表'
+        s=make_sheet(f'B.{n}',head,nc);s['cells']['A1']=report_title(cfg,f'按{titles[n-1]}面积与蓄积统计表',f'B.{n}')
         if n==2:s['cells']['Q5']='其他无立\n木林地'
         for metric,offset in [('area',0),('volume',size)]:
             start=head+1+offset;labels(s,gs,owners,start,2);merge(s,f'A{start}:A{start+size-1}','面积' if metric=='area' else '蓄积')
@@ -332,7 +337,7 @@ def build(records,cfg):
         s['last']=head+2*size;sheets.append(s)
     classes=CLASSES[:5]+[c for c in CLASSES[5:] if any(r['land_class']==c for r in records)]
     nc=3+2*(1+len(classes));s=make_sheet('B.5',6,nc)
-    merge(s,f'A1:{col(nc)}2',f'表B.5 {cfg["use_nature"]}使用林地分森林类别按现状地类面积统计表')
+    merge(s,f'A1:{col(nc)}2',report_title(cfg,'分森林类别按现状地类面积统计表','B.5'))
     merge(s,f'A3:{col(nc)}3','单位：公顷');merge(s,'A4:A5','县、林业局');merge(s,'B4:C5','森林类别')
     s['cells']['A6']=1;merge(s,'B6:C6',2)
     for k,lc in enumerate(['合计']+classes):
@@ -350,7 +355,7 @@ def build(records,cfg):
                     base=base_criteria(g,o)+([('I',lc)] if lc else [])
                     totals.union(s,f'{col(4+k*2+h)}{row}','area',base,'L',[k for k,v in cfg['forest_map'].items() if v in leaves[j]])
     s['last']=6+7*(1+len(counties));s['formats']=[(f'A6:{col(nc)}6','0'),(f'D7:{col(nc)}{s["last"]}','0.0000;-0.0000;;@')];sheets.append(s)
-    s=make_sheet('B.6',5,11);s['cells']['A1']=f'表B.6 {cfg["use_nature"]}使用重点生态区域林地面积统计表'
+    s=make_sheet('B.6',5,11);s['cells']['A1']=report_title(cfg,'重点生态区域林地面积统计表','B.6')
     if cfg['ecology']['mode']=='none':
         s['cells']['A6']='=IF(COUNTIF(\'A.1\'!P4:P'+str(detail['last'])+',"不涉及")=COUNTA(\'内业处理表\'!'+columns[6]+'4:'+columns[6]+str(max(r['source'] for r in records))+'),"不涉及","需核查生态区域")';s['last']=6
     else:
@@ -361,7 +366,7 @@ def build(records,cfg):
     s['formats']=[(f'B6:J{s["last"]}','0.0000;-0.0000;;@')];sheets.append(s)
     sheets.append(build_fee(records,cfg,gs,totals))
     status=make_sheet('现状调查表',35,19);status['last']=35;status['preserve_body']=True
-    status['cells'].update(cfg['status_fields']);status['cells'].update({'A1':f'建设项目{cfg["use_nature"]}使用林地现状调查表','D3':cfg['project_name'],'A16':f'建设项目{cfg["use_nature"]}使用林地现状调查表（续）'})
+    status['cells'].update(cfg['status_fields']);status['cells'].update({'A1':report_title(cfg,'现状调查表'),'D3':cfg['project_name'],'A16':report_title(cfg,'现状调查表（续）')})
     for metric,start in [('area',7),('volume',10)]:
         for j,o in enumerate(owners):
             row=start+j;base=base_criteria((),o);totals.put(status,f'D{row}',metric,base)
@@ -391,7 +396,7 @@ def build(records,cfg):
 def build_fee(records,cfg,gs,totals):
     fee=cfg['fee'];s=make_sheet('B.7',7,13)
     s['cells']['A3']='单位：面积—公顷；基础单价—元/平方米；金额—万元'
-    s['cells']['A1']=f'表B.7 {cfg["use_nature"]}使用林地森林植被恢复费'+('参考测算表' if fee['mode']=='reference' else '测算表')
+    s['cells']['A1']=report_title(cfg,'森林植被恢复费'+('参考测算表' if fee['mode']=='reference' else '测算表'),'B.7')
     if fee['mode']=='not_applicable':
         merge(s,'A8:M9','不适用：'+fee['basis']);s['last']=9;return s
     s['cells'].update({'H4':'乔木林地等（10元类）','K4':'灌木林地等（6元类）','I8':10,'L8':6})

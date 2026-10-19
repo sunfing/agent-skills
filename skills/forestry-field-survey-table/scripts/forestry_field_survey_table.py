@@ -154,10 +154,9 @@ def workflow_rows(headers, source_rows, rows, use_nature=None):
         r = old[:12] + [authority] + old[12:18] + [None] + old[18:]
         r[33] = use_nature
         original.append(r)
-        # Second of each paired column is deliberately blank for field entry.
-        indices = [6,7,8,None,9,10,11,12,13,14,15,16,17,None,18,19,
-                   20,None,21,None,22,None,23,24,25,None,26,None,27,None,
-                   28,None,29,None,30,None,34]
+        # Compact field sheet: reference soil retained, observations left blank.
+        indices = [6,7,8,None,9,10,11,14,15,17,None,18,19,None,None,
+                   None,None,None,None,29,None,34]
         field.append([None if i is None else r[i] for i in indices])
     return [{'name': '原始因子表', 'rows': original}, {'name': '外业调查表', 'rows': field}]
 

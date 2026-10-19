@@ -64,6 +64,28 @@ try {
   $s=$b.Worksheets.Item($d.name)
   foreach($f in $d.font_formats){$font=$s.Range($f[0]).Font;$font.Name=$f[1];$font.Size=[double]$f[2];$font.Bold=[bool]$f[3];$font.Italic=[bool]$f[4]}
  }
+ # Native AutoFit cannot size merged title cells. Measure the same text/font
+ # in a disposable unmerged cell, then grow only the title's final row.
+ $measure=$b.Worksheets.Add()
+ foreach($d in $j.sheets){
+  $s=$b.Worksheets.Item($d.name)
+  $titles=if($d.name -eq '现状调查表'){@('A1','A16')}else{@('A1')}
+  foreach($address in $titles){
+   $cell=$s.Range($address);$area=$cell.MergeArea;$probe=$measure.Range('A1')
+   $probe.Value2=$cell.Value2;$probe.WrapText=$true
+   foreach($prop in @('Name','Size','Bold','Italic')){$probe.Font.$prop=$cell.Font.$prop}
+   $lo=0.1;$hi=255.0
+   for($i=0;$i -lt 12;$i++){
+    $mid=($lo+$hi)/2;$probe.ColumnWidth=$mid
+    if($probe.Width -gt $area.Width){$hi=$mid}else{$lo=$mid}
+   }
+   $probe.ColumnWidth=$lo;[void]$probe.EntireRow.AutoFit()
+   $cell.WrapText=$true;$cell.ShrinkToFit=$false
+   $extra=$probe.RowHeight-$area.Height
+   if($extra -gt 0){$row=$s.Rows.Item($area.Row+$area.Rows.Count-1);$row.RowHeight=$row.RowHeight+$extra}
+  }
+ }
+ $measure.Delete()
  $t.Close($false);$t=$null;$e.Calculation=-4105;$e.CalculateFullRebuild()
  foreach($d in $j.sheets){$b.Worksheets.Item($d.name).ExportAsFixedFormat(0,(Join-Path $j.stage "$($d.name).pdf"))}
  $b.Worksheets.Item('内业处理表').Activate()

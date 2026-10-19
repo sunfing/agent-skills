@@ -89,18 +89,35 @@ class SurveyTests(unittest.TestCase):
     if '灌木' in land:self.assertEqual(rows[0][8],'一般灌木林地')
     if expected is None:self.assertEqual(rows[0][13],'999');self.assertTrue(any('未匹配林地类型' in x for x in w))
  def test_workflow_observations_are_independent(self):
-  headers=['小班编','面积','SHI_QUAN_D','LIN_ZHONG','PINGJUN_SG','YU_BI_DU']
-  raw=[['02',.1,'20','242',5,.15],['01',.2,'10','111',8,.7]]
+  headers=['小班编','面积','SHI_QUAN_D','LIN_ZHONG','PINGJUN_SG','YU_BI_DU','TU_RANG_LX']
+  raw=[['02',.1,'20','242',5,.15,'122'],['01',.2,'10','111',8,.7,'123']]
   rows,_=m.prepare(headers,raw)
   sheets=m.workflow_rows(['_id']+headers[1:],raw,rows,'临时')
   self.assertEqual([s['name'] for s in sheets],['原始因子表','外业调查表'])
   original,field=[s['rows'] for s in sheets]
-  self.assertEqual([len(original[0]),len(field[0])],[35,37])
+  self.assertEqual([len(original[0]),len(field[0])],[35,22])
   self.assertEqual(original[0][12],'国家公益林');self.assertEqual(original[1][12],'地方公益林')
   self.assertEqual(original[1][22],.15);self.assertEqual(original[1][33],'临时')
   for row in field:
-   for i in [3,13,17,19,21,25,27,29,31,33,35]:self.assertIsNone(row[i])
+   for i in [3,10,12,13,14,15,16,17,18,20]:self.assertIsNone(row[i])
+  self.assertEqual([r[19] for r in field],['123','122'])
+  self.assertEqual([r[7] for r in field],['水源林','能源林'])
   field[0][3]='疏林地';self.assertIsNone(original[0][8])
+ def test_summary_titles_follow_project_and_use_nature(self):
+  path=ROOT/'skills/forestry-survey-summary-tables/scripts/summary_tables.py'
+  spec=importlib.util.spec_from_file_location('summary_titles',path)
+  summary=importlib.util.module_from_spec(spec);spec.loader.exec_module(summary)
+  for nature in ['临时','永久']:
+   book=summary.read_book(ROOT/'skills/forestry-survey-summary-tables/assets/report-headers.xlsx')
+   values={0:'示例市',1:'示例县',2:'示例乡',3:'示例村',6:'001',7:.1,9:'乔木林地',10:'防护林林地',11:'集体',12:'一般商品林',14:'Ⅱ',17:'其他区域',24:.6,26:1.2,35:nature}
+   for index,value in values.items():book['内业处理表']['cells'][f'{summary.col(index+1)}4']={'value':value}
+   cfg={'project_name':'跨地区测试工程','use_nature':nature,'ecology':{'mode':'none','confirmed':True},'fee':{'mode':'reference','region':'河北省','urban_planning_area':False,'project_kind':'公共基础设施'}}
+   records=summary.prepare(book,cfg);sheets=summary.build(records,cfg)
+   self.assertEqual([s['name'] for s in sheets],summary.REPORT_NAMES)
+   for sheet in sheets:
+    self.assertTrue(sheet['cells']['A1'].startswith(f'跨地区测试工程 {nature}使用林地 '))
+    if sheet['name']!='现状调查表':self.assertTrue(sheet['cells']['A1'].endswith(f'（表{sheet["name"]}）'))
+   self.assertEqual(sheets[0]['cells']['A16'],f'跨地区测试工程 {nature}使用林地 现状调查表（续）')
  def test_template_clean_and_styled(self):
   ns={'m':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
   with zipfile.ZipFile(SKILL/'assets/A.1.xlsx') as z:
@@ -114,6 +131,13 @@ class SurveyTests(unittest.TestCase):
      row=int(''.join(c for c in cell.get('r') if c.isdigit()))
      if row>=4:self.assertIsNone(cell.find('m:v',ns));self.assertIsNone(cell.find('m:f',ns))
    strings=E.fromstring(z.read('xl/sharedStrings.xml'));texts=[''.join(x.itertext()) for x in strings]
+   field=E.fromstring(z.read('xl/worksheets/sheet2.xml'))
+   headers=[]
+   for c in field.findall('.//m:row[@r="3"]/m:c',ns):
+    v=c.find('m:v',ns)
+    if v is not None:headers.append(texts[int(v.text)])
+   normalize=lambda v:''.join(v.split()).replace('²','2').replace('（','(').replace('）',')')
+   self.assertEqual(list(map(normalize,headers)),['小班编号','面积hm2','原始地类','现状地类','林地类型','林地权属','森林类别','林种','起源','原优势树种','优势树种','龄组(产期)','林龄','平均树高m','郁闭度(覆盖度)','株数','坡向','坡位','坡度','土壤类型','土层厚度','备注'])
    self.assertNotIn('旧编号',texts)
    self.assertFalse(any('三家' in x or '承德' in x for x in texts))
 if __name__=='__main__':unittest.main()
