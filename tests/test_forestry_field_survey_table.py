@@ -1,8 +1,57 @@
-import importlib.util, pathlib, unittest, zipfile, xml.etree.ElementTree as E
+import importlib.util, pathlib, unittest, zipfile, xml.etree.ElementTree as E, tempfile, shutil
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 SKILL=ROOT/'skills/forestry-field-survey-table'
 spec=importlib.util.spec_from_file_location('field_survey',SKILL/'scripts/forestry_field_survey_table.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 class SurveyTests(unittest.TestCase):
+ def test_previously_missing_common_codes(self):
+  h=['小班编','面积','BH_DJ','LING_ZU','LIN_ZHONG','SEN_LIN_LB','YOU_SHI_SZ','LD_QS','QI_YUAN']
+  rows,w=m.prepare(h,[['01',.0126,'2','3','251','011','706000','21','12']])
+  r=rows[0]
+  self.assertEqual([r[i] for i in [9,10,11,12,13,14,16,17]],['经济林林地','集体','重点公益林','Ⅱ','果树林','天然','杏','近熟林'])
+  self.assertFalse(any(x.startswith('Untranslated') for x in w))
+ def test_all_forest_groups_and_names(self):
+  groups=[(range(111,118),'防护林林地'),(range(121,128),'特用林林地'),(range(231,234),'用材林林地'),([240],'薪炭林林地'),([242],'能源林林地'),(range(251,256),'经济林林地')]
+  for codes,typ in groups:
+   for code in codes:
+    with self.subTest(code=code):
+     for v in [str(code),m.CODE_FIELDS['LIN_ZHONG']['codes'][str(code)]]:
+      rows,w=m.prepare(['小班编','面积','LIN_ZHONG'],[['1',.1,v]])
+      self.assertEqual(rows[0][9],typ)
+      self.assertFalse(any('Untranslated LIN_ZHONG' in x for x in w))
+  self.assertEqual(m.CODE_FIELDS['LIN_ZHONG']['entry_sources']['242'],'confirmed-template')
+ def test_soil_confirmation_and_coverage(self):
+  h=['小班编','面积','TU_RANG_LX','YOU_SHI_SZ','SEN_LIN_LB']
+  raw=[['01',.1,'122','706001','011'],['02',.1,'999','706000','11']]
+  rows,w=m.prepare(h,raw)
+  self.assertEqual(rows[0][27],'122');self.assertEqual(rows[0][16],'706001')
+  self.assertTrue(any(x.startswith('Known TU_RANG_LX') for x in w))
+  rows,w=m.prepare(h,raw,soil_dictionary='revision-reference')
+  self.assertEqual([r[27] for r in rows],['褐土','999'])
+  self.assertEqual([r[11] for r in rows],['重点公益林','重点公益林'])
+  audit=m.dictionary_coverage(h,raw)
+  self.assertEqual(audit['TU_RANG_LX']['requires_source_confirmation'],['122'])
+  self.assertEqual(audit['TU_RANG_LX']['unknown_values'],['999'])
+  self.assertEqual(audit['YOU_SHI_SZ']['unknown_values'],['706001'])
+  self.assertEqual(m.dictionary_coverage(h,raw,'revision-reference')['TU_RANG_LX']['requires_source_confirmation'],[])
+  with self.assertRaises(ValueError):m.prepare(h,raw,soil_dictionary='unknown')
+ def test_common_code_families(self):
+  for field,expected in [('BH_DJ',['Ⅰ','Ⅱ','Ⅲ','Ⅳ']),('LING_ZU',['幼龄林','中龄林','近熟林','成熟林','过熟林'])]:
+   idx=next(k for k,v in m.FIELDS.items() if v==field)
+   rows,_=m.prepare(['小班编','面积',field],[[str(i),.1,str(i)] for i in range(1,len(expected)+1)])
+   self.assertEqual([r[idx] for r in rows],expected)
+  self.assertEqual([m.MAPS['QI_YUAN'][str(x)] for x in [11,12,13,21,22,23,24]],['天然']*3+['人工']*4)
+  self.assertEqual([m.MAPS['LD_QS'][str(x)] for x in [20,21,22,23]],['集体']*4)
+ def test_standalone_install_uses_local_dictionary(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   root=pathlib.Path(tmp)/'portable-skill';shutil.copytree(SKILL,root)
+   spec=importlib.util.spec_from_file_location('portable_field',root/'scripts/forestry_field_survey_table.py')
+   portable=importlib.util.module_from_spec(spec);spec.loader.exec_module(portable)
+   rows,_=portable.prepare(['小班编','面积','LIN_ZHONG','YOU_SHI_SZ'],[['001',.1,'251','706000']])
+   self.assertEqual(rows[0][6],'001');self.assertEqual(rows[0][16],'杏')
+   self.assertEqual(portable.ROOT,root)
+   for p in root.rglob('*'):
+    if p.suffix in ('.md','.json','.py','.ps1','.yaml'):
+     self.assertNotIn('ink.doro',p.read_text(encoding='utf-8-sig'))
  def test_mapping_sort_and_unknowns(self):
   h=['小班编','面积','LIN_BAN','XIAO_BAN','LIN_ZHONG','YOU_SHI_SZ','TU_RANG_LX','PINGJUN_SG','PO_DU','塔号']
   rows,w=m.prepare(h,[['02',.1,'0327','00004','242','410001','122',0,9,'T2'],['01',.2,'0327','00003','111','200000','122',None,4,'T1']])

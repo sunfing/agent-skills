@@ -35,3 +35,5 @@ python -m unittest discover -s tests -p test_forestry_field_survey_table.py -v
 自动测试覆盖字段对应、数据边界和模板净化；跨平台 CI 不具备桌面 Excel。实际生成必须在 Windows Excel 中保存并重新打开，通过数据和样式检查才发布。不得把 CI 通过等同于原生 Excel 验证。
 
 首次安装和模板更新后，用临时输出跑一份实际初表并检查。没有 Excel 时报告环境不满足，不自动降级拼接工作簿 XML。升级时使用原安装工具，保留用户成果，勿覆盖本地自定义代码映射。
+
+字典已完整内置至 `references/code-dictionary.json`，脚本直接读取291个已整理映射条目（含123项树种），无需个人笔记、账号或联网。来源版本、模板简称和参考限制随Skill分发；不宣称覆盖全部地方扩展。土壤表默认保留代码，确认源库一致后可用 `--soil-dictionary revision-reference` 启用。输出 `dictionary_coverage` 区分已识别、待确认适用和未知值。

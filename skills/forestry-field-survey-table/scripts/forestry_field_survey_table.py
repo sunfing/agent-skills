@@ -9,23 +9,17 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-MAPS = {
-    "LD_QS": {"10": "国有", "20": "集体"},
-    "SEN_LIN_LB": {"012": "一般公益林", "022": "一般商品林"},
-    "BH_DJ": {"3": "Ⅲ", "4": "Ⅳ"},
-    "LIN_ZHONG": {"111": "水源林", "112": "水保林", "233": "用材林", "242": "能源林"},
-    "QI_YUAN": {"11": "天然", "21": "人工"},
-    "YOU_SHI_SZ": {"200000": "油松", "465000": "刺槐", "490000": "其他硬阔类", "590000": "其他软阔类", "999000": "其他灌木"},
-    "LING_ZU": {"1": "幼龄林", "4": "成熟林"},
-    "PO_XIANG": dict(zip(map(str, range(1, 10)), ["北", "东北", "东", "东南", "南", "西南", "西", "西北", "无坡向"])),
-    "PO_WEI": dict(zip(map(str, range(1, 7)), ["脊", "上", "中", "下", "谷", "平地"])),
-}
-# Confirmed template naming, not a cross-version statutory code table.
-LAND_TYPES = {
-    "水源林": "防护林林地", "水保林": "防护林林地", "防护林": "防护林林地",
-    "用材林": "用材林林地", "经济林": "经济林林地", "能源林": "能源林林地",
-    "薪炭林": "薪炭林林地", "特用林": "特用林林地", "特种用途林": "特用林林地",
-}
+# Shipped local data is the source of truth; never fetch personal notes at runtime.
+DICTIONARY = json.loads((ROOT / "references/code-dictionary.json").read_text(encoding="utf-8"))
+if DICTIONARY.get('schema_version') != 1:
+    raise ValueError('Unsupported bundled dictionary schema')
+CODE_FIELDS = DICTIONARY['fields']
+MAPS = {field: {key: spec.get('display', {}).get(key, name) for key, name in spec['codes'].items()}
+        for field, spec in CODE_FIELDS.items() if spec['usage'] == 'automatic'}
+LAND_TYPES = dict(DICTIONARY['land_type_names'])
+for key, land_type in CODE_FIELDS['LIN_ZHONG']['land_types'].items():
+    LAND_TYPES[CODE_FIELDS['LIN_ZHONG']['codes'][key]] = land_type
+    LAND_TYPES[MAPS['LIN_ZHONG'][key]] = land_type
 SHRUB_NAMES = {"灌木林地", "一般灌木林地", "特殊灌木林地", "国家特别规定灌木林地"}
 FIELDS = {0: "市", 1: "县", 2: "乡", 3: "ZLDWMC", 4: "LIN_BAN", 5: "XIAO_BAN", 6: "小班编", 7: "面积", 8: "DLMC", 10: "LD_QS", 11: "SEN_LIN_LB", 12: "BH_DJ", 13: "LIN_ZHONG", 14: "QI_YUAN", 15: "STQWMC", 16: "YOU_SHI_SZ", 17: "LING_ZU", 18: "PINGJUN_SG", 19: "PINGJUN_XJ", 20: "YU_BI_DU", 21: "MEI_GQ_XJ", 24: "PO_XIANG", 25: "PO_WEI", 26: "PO_DU", 27: "TU_RANG_LX", 28: "TU_CENG_HD"}
 NUMERIC = {18, 19, 20, 21, 26, 28}
@@ -50,7 +44,12 @@ def number(v, field):
         raise ValueError(f"Invalid {field}: {v}")
     return float(n)
 
-def prepare(headers, source_rows, *, area_field="面积", id_field="小班编", city=None, county=None, township=None):
+def prepare(headers, source_rows, *, area_field="面积", id_field="小班编", city=None, county=None, township=None, soil_dictionary=None):
+    if soil_dictionary not in (None, 'revision-reference'):
+        raise ValueError('Unsupported soil dictionary')
+    maps = dict(MAPS)
+    if soil_dictionary:
+        maps['TU_RANG_LX'] = CODE_FIELDS['TU_RANG_LX']['codes']
     headers = [clean(h) for h in headers]
     present = [h for h in headers if h]
     if len(set(present)) != len(present):
@@ -79,13 +78,22 @@ def prepare(headers, source_rows, *, area_field="面积", id_field="小班编", 
                 continue
             if col in NUMERIC:
                 row[col] = number(v, field)
-            elif field in MAPS:
+            elif field in maps:
                 raw = code(v)
-                row[col] = MAPS[field].get(raw, raw)
-                if raw not in MAPS[field] and not (field == "LIN_ZHONG" and raw in LAND_TYPES):
+                row[col] = maps[field].get(raw, raw)
+                if raw not in maps[field] and raw not in maps[field].values() and raw not in CODE_FIELDS[field]['codes'].values() and not (field == "LIN_ZHONG" and raw in LAND_TYPES):
                     warnings.add(f"Untranslated {field}: {raw}")
             else:
                 row[col] = code(v)
+        soil = code(r.get('TU_RANG_LX'))
+        if not soil_dictionary and soil and soil not in CODE_FIELDS['TU_RANG_LX']['codes'].values():
+            if soil in CODE_FIELDS['TU_RANG_LX']['codes']:
+                warnings.add(f"Known TU_RANG_LX requires source confirmation: {soil} (revision-reference)")
+            else:
+                warnings.add(f"Untranslated TU_RANG_LX: {soil}")
+        authority = code(r.get('SHI_QUAN_D'))
+        if authority and authority not in MAPS['SHI_QUAN_D'] and authority not in MAPS['SHI_QUAN_D'].values():
+            warnings.add(f"Untranslated SHI_QUAN_D: {authority}")
         row[6], row[7] = ident, area
         for col, value in enumerate((city, county, township)):
             if value:
@@ -114,6 +122,25 @@ def default_output(source):
     return source.with_name((stem[:-3] if stem.endswith("_初表") else stem) + "_外调.xlsx")
 
 
+def dictionary_coverage(headers, rows, soil_dictionary=None):
+    """Report known-but-gated values separately from absent dictionary entries."""
+    result = {}
+    for index, field in enumerate(map(clean, headers)):
+        if field not in CODE_FIELDS:
+            continue
+        spec = CODE_FIELDS[field]
+        values = {code(row[index]) for row in rows if index < len(row)} - {None, ''}
+        known = set(spec['codes']) | set(spec['codes'].values()) | set(spec.get('display', {}).values())
+        if field == 'LIN_ZHONG':
+            known |= set(LAND_TYPES)
+        gated = values & set(spec['codes']) if spec['usage'] == 'confirmed_soil' and not soil_dictionary else set()
+        result[field] = {'recognized_values': sorted(values & known),
+                         'requires_source_confirmation': sorted(gated),
+                         'unknown_values': sorted(values - known),
+                         'reference_only': spec['usage'] == 'reference_only'}
+    return result
+
+
 def workflow_rows(headers, source_rows, rows, use_nature=None):
     """Keep the source snapshot separate from blank on-site observation columns."""
     by_id = {code(r[headers.index('_id')]): dict(zip(headers, r)) for r in source_rows
@@ -122,7 +149,7 @@ def workflow_rows(headers, source_rows, rows, use_nature=None):
     for old in rows:
         raw = by_id[old[6]]
         authority = code(raw.get('SHI_QUAN_D'))
-        authority = {'10': '国家公益林', '20': '地方公益林'}.get(authority, authority)
+        authority = MAPS['SHI_QUAN_D'].get(authority, authority)
         # A:AI; no project-specific old parcel number, no inferred stock/count.
         r = old[:12] + [authority] + old[12:18] + [None] + old[18:]
         r[33] = use_nature
@@ -150,6 +177,7 @@ def main():
     ap.add_argument("--county")
     ap.add_argument("--township")
     ap.add_argument("--use-nature", choices=['临时', '永久'], help='Confirmed use nature; blank if omitted')
+    ap.add_argument("--soil-dictionary", choices=["revision-reference"], help="Enable bundled soil names only after source-version confirmation")
     ap.add_argument("--check-only", action="store_true")
     args = ap.parse_args()
     if os.name != "nt":
@@ -167,7 +195,7 @@ def main():
         raw = Path(tmp) / "source.json"
         excel({"mode": "read", "input": str(source), "sheet": args.sheet, "result": str(raw)}, tmp)
         data = json.loads(raw.read_text(encoding="utf-8-sig"))
-        rows, warnings = prepare(data["headers"], data["rows"], area_field=args.area_field, id_field=args.id_field, city=args.city, county=args.county, township=args.township)
+        rows, warnings = prepare(data["headers"], data["rows"], area_field=args.area_field, id_field=args.id_field, city=args.city, county=args.county, township=args.township, soil_dictionary=args.soil_dictionary)
         headers = [clean(h) for h in data['headers']]
         headers[headers.index(args.id_field)] = '_id'
         sheets = workflow_rows(headers, data['rows'], rows, args.use_nature)
@@ -179,7 +207,7 @@ def main():
             # Exclusive creation prevents racing an existing user workbook.
             with output.open("xb") as dest:
                 dest.write(staging.read_bytes())
-        print(json.dumps({"records": len(rows), "area_ha": str(sum((Decimal(str(r[7])) for r in rows), Decimal(0))), "warnings": warnings, "output": None if args.check_only else str(output)}, ensure_ascii=False))
+        print(json.dumps({"dictionary_version": DICTIONARY["dictionary_version"], "dictionary_coverage": dictionary_coverage(data['headers'], data['rows'], args.soil_dictionary), "records": len(rows), "area_ha": str(sum((Decimal(str(r[7])) for r in rows), Decimal(0))), "warnings": warnings, "output": None if args.check_only else str(output)}, ensure_ascii=False))
 
 if __name__ == "__main__":
     main()

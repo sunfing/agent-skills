@@ -9,7 +9,7 @@ description: 将使用林地小班因子初表（xls、xlsx）整理为独立的
 
 ## 执行规则
 
-- Windows、桌面 Microsoft Excel、Python 3.10+；无额外 Python 依赖。先读 [字段对应](references/field-mapping.md)。
+- Windows、桌面 Microsoft Excel、Python 3.10+；无额外 Python 依赖。先读 [字段对应](references/field-mapping.md)。代码字典内置于 `references/code-dictionary.json`，脚本直接读取；安装后可独立使用，不需要个人笔记链接或账号。
 - 确认源工作表、编号字段、占用面积字段及单位公顷。不得拿 TBMJ、XBMJ 或 Shape_Area 代替占用面积。市县乡须来自源表或已确认参数。
 - “先讨论”时只读，不执行会创建暂存文件的命令。
 - 保留编号及前导零；纯数字编号按数值排序，其余保留源顺序。缺失、重复编号和非法面积停止。
@@ -24,10 +24,10 @@ description: 将使用林地小班因子初表（xls、xlsx）整理为独立的
 python "<skill-root>/scripts/forestry_field_survey_table.py" "D:/项目/调查_初表.xls"
 ```
 
-可选：`--sheet`、`--id-field`、`--area-field`、`--city`、`--county`、`--township`、`--use-nature 临时|永久`、`--output`、`--check-only`。多工作表必须指定 `--sheet`；默认编号“小班编”、面积“面积”。`--check-only` 会使用 Excel 和临时文件，但不生成成果。
+可选：`--sheet`、`--id-field`、`--area-field`、`--city`、`--county`、`--township`、`--use-nature 临时|永久`、`--soil-dictionary revision-reference`（仅确认源库一致后启用土壤参考）、`--output`、`--check-only`。多工作表必须指定 `--sheet`；默认编号“小班编”、面积“面积”。`--check-only` 会使用 Excel 和临时文件，但不生成成果。
 
 默认输出源文件同级目录，末尾 `_初表` 换成 `_外调.xlsx`；已有输出拒绝覆盖。脚本暂存、保存重开、逐格验证后发布，源文件不改动。
 
-交付说明输出位置、记录数、占用面积及未解决代码。后续人工整理37列“内业处理表”（见汇总 Skill 模板）后，再运行 `forestry-survey-summary-tables` 生成现状调查表、A.1、B.1—B.7。旧版33列 A.1 不直接充当新内业输入。
+交付说明输出位置、记录数、占用面积及未解决代码。核对输出的 `dictionary_version` 和 `dictionary_coverage`，区分未知代码与已收录但尚未确认适用的土壤代码；不能把逐格验证通过说成全部释义完成。后续人工整理37列“内业处理表”（见汇总 Skill 模板）后，再运行 `forestry-survey-summary-tables` 生成现状调查表、A.1、B.1—B.7。旧版33列 A.1 不直接充当新内业输入。
 
 更新安装时完整同步本 Skill 文件夹。不得用本工具覆盖已经人工完善的工作簿。

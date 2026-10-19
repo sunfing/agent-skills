@@ -27,3 +27,5 @@ python -m unittest discover -s tests -p test_forestry_field_survey_table.py -v
 ```
 
 Portable tests check transformation boundaries and the clean template. CI does not provide desktop Excel. Runtime verification saves and reopens in Excel and compares values and key styles before publishing; CI alone cannot prove Excel compatibility. Test an actual input to a temporary output after installation or template changes. Do not replace native verification with raw XML construction. Update using the original installation tool; preserve user outputs and custom mapping changes.
+
+The bundled `references/code-dictionary.json` is loaded directly by the script: 291 field/code mappings, including 123 tree-species entries. No personal note service, account or network access is needed. Sources, historical versions and display aliases travel with the skill. Unknown extensions remain exact. Soil names are bundled but gated: use `--soil-dictionary revision-reference` only after confirming that source convention. `dictionary_coverage` separates recognized, confirmation-required and unknown values.
