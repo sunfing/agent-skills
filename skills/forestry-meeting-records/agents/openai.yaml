@@ -1,0 +1,4 @@
+interface:
+  display_name: "Forestry Meeting Records"
+  short_description: "Prepare forestry meeting records from ownership proofs"
+  default_prompt: "使用 $forestry-meeting-records 依据指定林木权属证明制作使用林地会议记录底稿，永久与临时分开，村级与林场分别处理，会议事实留空，并核对数据和全部页面。"
