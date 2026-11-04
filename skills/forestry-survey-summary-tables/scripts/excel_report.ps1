@@ -8,6 +8,13 @@ try {
  $b=$e.Workbooks.Open($j.source,0,$true)
  $t=$e.Workbooks.Open($j.template,0,$true)
  $e.Calculation=-4135
+ foreach($name in $j.input_names){
+  $s=$b.Worksheets.Item($name)
+  if($s.Range('A1').Value2 -ne $null){
+   $font=$s.Range('A1').Font
+   $fontChecks+=@{sheet=$name;address='A1';name=$font.Name;size=$font.Size;bold=$font.Bold;italic=$font.Italic}
+  }
+ }
  foreach($ws in @($b.Worksheets)){if($ws.Name -in $j.replace_names){$ws.Delete()}}
  $anchor=$b.Worksheets.Item($b.Worksheets.Count)
  foreach($d in $j.sheets){$s=$b.Worksheets.Add([Type]::Missing,$anchor);$s.Name=$d.name;$anchor=$s}
@@ -52,7 +59,7 @@ try {
   $addresses=if($d.name -eq '现状调查表'){@('A1','D3','D7')}else{@('A1')}
   foreach($address in $addresses){
    $font=$ref.Range($address).Font
-   $fontChecks+=@{sheet=$d.name;address=$address;name=$font.Name;size=$font.Size;bold=$font.Bold}
+   $fontChecks+=@{sheet=$d.name;address=$address;name=$font.Name;size=$font.Size;bold=$font.Bold;italic=$font.Italic}
   }
   $b.Activate();$s.Activate();$e.ActiveWindow.View=2;$e.ActiveWindow.Zoom=100
  }
@@ -93,7 +100,7 @@ try {
  $b=$e.Workbooks.Open($j.candidate,0,$true)
  foreach($check in $fontChecks){
   $font=$b.Worksheets.Item($check.sheet).Range($check.address).Font
-  if($font.Name -ne $check.name -or $font.Size -ne $check.size -or $font.Bold -ne $check.bold){throw "Template font changed: $($check.sheet)!$($check.address)"}
+  if($font.Name -ne $check.name -or $font.Size -ne $check.size -or $font.Bold -ne $check.bold -or $font.Italic -ne $check.italic){throw "Preserved font changed: $($check.sheet)!$($check.address)"}
  }
  foreach($d in $j.sheets){
   $s=$b.Worksheets.Item($d.name)
