@@ -103,7 +103,7 @@ class SurveyTests(unittest.TestCase):
   self.assertEqual([r[19] for r in field],['123','122'])
   self.assertEqual([r[7] for r in field],['水源林','能源林'])
   field[0][3]='疏林地';self.assertIsNone(original[0][8])
- def test_summary_titles_follow_project_and_use_nature(self):
+ def test_summary_titles_stay_template_headings(self):
   path=ROOT/'skills/forestry-survey-summary-tables/scripts/summary_tables.py'
   spec=importlib.util.spec_from_file_location('summary_titles',path)
   summary=importlib.util.module_from_spec(spec);spec.loader.exec_module(summary)
@@ -114,10 +114,19 @@ class SurveyTests(unittest.TestCase):
    cfg={'project_name':'跨地区测试工程','use_nature':nature,'ecology':{'mode':'none','confirmed':True},'fee':{'mode':'reference','region':'河北省','urban_planning_area':False,'project_kind':'公共基础设施'}}
    records=summary.prepare(book,cfg);sheets=summary.build(records,cfg)
    self.assertEqual([s['name'] for s in sheets],summary.REPORT_NAMES)
-   for sheet in sheets:
-    self.assertTrue(sheet['cells']['A1'].startswith(f'跨地区测试工程 {nature}使用林地 '))
-    if sheet['name']!='现状调查表':self.assertTrue(sheet['cells']['A1'].endswith(f'（表{sheet["name"]}）'))
-   self.assertEqual(sheets[0]['cells']['A16'],f'跨地区测试工程 {nature}使用林地 现状调查表（续）')
+   expected={
+    '现状调查表':'建设项目使用林地现状调查表',
+    'A.1':'表A.1 使用林地小班因子调查表',
+    'B.1':'表B.1 使用林地按林地类型面积与蓄积统计表',
+    'B.2':'表B.2 使用林地按现状地类面积与蓄积统计表',
+    'B.3':'表B.3 使用林地按森林类别面积与蓄积统计表',
+    'B.4':'表B.4 使用林地按林地保护等级面积与蓄积统计表',
+    'B.5':'表B.5 使用林地分森林类别按现状地类面积统计表',
+    'B.6':'表B.6 使用重点生态区域林地面积统计表',
+    'B.7':'表B.7 使用林地森林植被恢复费参考测算表',
+   }
+   for sheet in sheets:self.assertEqual(sheet['cells']['A1'],expected[sheet['name']])
+   self.assertEqual(sheets[0]['cells']['A16'],'建设项目使用林地现状调查表（续）')
  def test_template_clean_and_styled(self):
   ns={'m':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
   with zipfile.ZipFile(SKILL/'assets/A.1.xlsx') as z:

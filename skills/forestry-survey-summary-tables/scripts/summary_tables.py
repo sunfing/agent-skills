@@ -258,9 +258,27 @@ def base_criteria(g,owner='计'):
     return list(zip('ABCD',g))+([('K',owner)] if owner!='计' else [])
 
 
+REPORT_TITLES = {
+    '现状调查表': '建设项目使用林地现状调查表',
+    '现状调查表（续）': '建设项目使用林地现状调查表（续）',
+    'A.1': '表A.1 使用林地小班因子调查表',
+    'B.1': '表B.1 使用林地按林地类型面积与蓄积统计表',
+    'B.2': '表B.2 使用林地按现状地类面积与蓄积统计表',
+    'B.3': '表B.3 使用林地按森林类别面积与蓄积统计表',
+    'B.4': '表B.4 使用林地按林地保护等级面积与蓄积统计表',
+    'B.5': '表B.5 使用林地分森林类别按现状地类面积统计表',
+    'B.6': '表B.6 使用重点生态区域林地面积统计表',
+    'B.7': '表B.7 使用林地森林植被恢复费参考测算表',
+}
+
+
 def report_title(cfg, label, table=None):
-    title = f'{text(cfg["project_name"])} {cfg["use_nature"]}使用林地 {label}'
-    return title + (f'（表{table}）' if table else '')
+    """Keep report headings from the template; project data belongs in report cells."""
+    if table in REPORT_TITLES:
+        return REPORT_TITLES[table]
+    if label in REPORT_TITLES:
+        return REPORT_TITLES[label]
+    return label
 
 
 def build(records,cfg):
