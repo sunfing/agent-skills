@@ -127,6 +127,111 @@ class SurveyTests(unittest.TestCase):
    }
    for sheet in sheets:self.assertEqual(sheet['cells']['A1'],expected[sheet['name']])
    self.assertEqual(sheets[0]['cells']['A16'],'建设项目使用林地现状调查表（续）')
+ def summary_fixture(self):
+  path=ROOT/'skills/forestry-survey-summary-tables/scripts/summary_tables.py'
+  spec=importlib.util.spec_from_file_location('summary_review',path)
+  summary=importlib.util.module_from_spec(spec);spec.loader.exec_module(summary)
+  book=summary.read_book(path.parents[1]/'assets/report-headers.xlsx')
+  values={0:'示例市',1:'示例县',2:'示例乡',3:'示例村',4:32,5:167,6:'001',7:.1,9:'乔木林地',10:'防护林林地',11:'集体',12:'一般商品林',14:'Ⅱ',17:'其他区域',24:.6,25:12.15,26:1.2,27:17,35:'临时'}
+  for index,value in values.items():book['内业处理表']['cells'][f'{summary.col(index+1)}4']={'value':value,'formula':None,'style':0}
+  cfg={'project_name':'测试工程','use_nature':'临时','ecology':{'mode':'none','confirmed':True},'fee':{'mode':'reference','region':'河北省','urban_planning_area':False,'project_kind':'公共基础设施'}}
+  return summary,book,cfg
+ def test_summary_rejects_invalid_measurements(self):
+  for column,value in [('Y',20),('Y',1.01),('Y',-.1),('Y','20%'),('AB',1.5),('AB',-1),('W',float('nan'))]:
+   with self.subTest(column=column,value=value):
+    summary,book,cfg=self.summary_fixture();book['内业处理表']['cells'][column+'4']['value']=value
+    with self.assertRaises(ValueError):summary.prepare(book,cfg)
+ def test_summary_ecology_must_agree_with_input(self):
+  summary,book,cfg=self.summary_fixture()
+  cfg['ecology']={'mode':'records','records':[{'name':'测试保护区','kind':'自然保护区','level':'国家级','parcel_ids':['001']}]}
+  with self.assertRaisesRegex(ValueError,'conflicts'):summary.prepare(book,cfg)
+  book['内业处理表']['cells']['R4']['value']='自然保护区'
+  records=summary.prepare(book,cfg);sheets=summary.build(records,cfg)
+  self.assertEqual(next(s for s in sheets if s['name']=='B.6')['checks']['B6'],.1)
+  cfg['ecology']={'mode':'none','confirmed':True}
+  with self.assertRaises(ValueError):summary.prepare(book,cfg)
+ def test_summary_preserves_identifier_padding_and_numeric_roles(self):
+  summary,book,cfg=self.summary_fixture();sh=book['内业处理表'];styles=sh['styles']
+  formats=styles.find('s:numFmts',summary.NS)
+  if formats is None:formats=E.SubElement(styles,'{'+summary.NS['s']+'}numFmts')
+  E.SubElement(formats,'{'+summary.NS['s']+'}numFmt',{'numFmtId':'999','formatCode':'00000'})
+  xfs=styles.find('s:cellXfs',summary.NS);E.SubElement(xfs,'{'+summary.NS['s']+'}xf',{'numFmtId':'999'})
+  sh['cells']['F4']['style']=len(xfs)-1
+  records=summary.prepare(book,cfg);sheets=summary.build(records,cfg);a=next(s for s in sheets if s['name']=='A.1')
+  effective={addr:fmt for area,fmt in a['formats'] for addr in summary.addresses(area)}
+  self.assertEqual(effective['F9'],'00000');self.assertEqual(a['display_checks']['F9'],'00167')
+  self.assertEqual(effective['X9'],'0;-0;;@');self.assertEqual(effective['V9'],'0.00;-0.00;;@')
+  sh['cells']['AB4']['value']=0
+  a=next(s for s in summary.build(summary.prepare(book,cfg),cfg) if s['name']=='A.1')
+  self.assertEqual(a['display_checks']['X9'],'')
+ def test_summary_permanent_note_excludes_temporary_policy(self):
+  summary,book,cfg=self.summary_fixture();cfg['use_nature']='永久';book['内业处理表']['cells']['AJ4']['value']='永久'
+  sheets=summary.build(summary.prepare(book,cfg),cfg);fee=next(s for s in sheets if s['name']=='B.7')
+  self.assertNotIn('临时使用林地',fee['cells'][f'A{fee["last"]}'])
+  self.assertIn(str(fee['last']),fee['style_rows'])
+ def test_summary_layout_uses_template_and_page_boundary(self):
+  summary,book,cfg=self.summary_fixture();sheets=summary.build(summary.prepare(book,cfg),cfg)
+  book['现状调查表']['cells']['A1']['value']='已核定模板标题'
+  summary.report_layout(sheets,book)
+  self.assertEqual(sheets[0]['cells']['A1'],'已核定模板标题')
+  self.assertEqual(sheets[0]['manual_breaks'],[15])
+ def test_summary_preservation_rejects_print_setting_drift(self):
+  from copy import deepcopy
+  summary,book,cfg=self.summary_fixture()
+  for field in ['rowBreaks','headerFooter','names','state']:
+   with self.subTest(field=field):
+    other=deepcopy(book);sh=other['内业处理表']
+    if field=='names':sh['names']['_xlnm.Print_Area']='changed'
+    elif field=='state':sh['state']='hidden'
+    else:E.SubElement(sh['xml'],'{'+summary.NS['s']+'}'+field,{'test':'changed'})
+    with self.assertRaisesRegex(ValueError,'setting changed'):summary.verify_preserved(book,other,summary.INPUT_NAMES)
+ def test_summary_timeout_still_runs_owned_session_cleanup(self):
+  from unittest.mock import patch
+  import subprocess
+  summary,book,cfg=self.summary_fixture()
+  with patch.object(summary.subprocess,'run',side_effect=[subprocess.TimeoutExpired('Excel',1),None]) as run:
+   with self.assertRaises(subprocess.TimeoutExpired):summary.run_excel(pathlib.Path('job.json'),timeout=1)
+   self.assertEqual(run.call_count,2)
+   self.assertEqual(run.call_args_list[1].args[0][-1],'-CleanupOnly')
+ def test_summary_publication_refuses_changed_source_and_existing_output(self):
+  import json
+  summary,book,cfg=self.summary_fixture()
+  with tempfile.TemporaryDirectory() as directory:
+   base=pathlib.Path(directory);source=base/'source.xlsx';candidate=base/'candidate.xlsx';manifest=base/'stage.json'
+   source.write_bytes(b'original');candidate.write_bytes(b'validated')
+   metadata={'source':str(source),'output':str(source),'source_hash':summary.digest(source),'candidate_hash':summary.digest(candidate),'records':1,'area_ha':.1,'volume_m3':1.2}
+   manifest.write_text(json.dumps(metadata),encoding='utf-8');source.write_bytes(b'user edit')
+   with self.assertRaisesRegex(ValueError,'changed since validation'):summary.publish(manifest)
+   self.assertEqual(source.read_bytes(),b'user edit')
+   source.write_bytes(b'original');metadata['output']=str(candidate);manifest.write_text(json.dumps(metadata),encoding='utf-8')
+   with self.assertRaises(FileExistsError):summary.publish(manifest)
+   self.assertEqual(candidate.read_bytes(),b'validated')
+ def test_summary_restores_fixed_template_borders_only(self):
+  summary,book,cfg=self.summary_fixture()
+  template=summary.ROOT/'assets/report-headers.xlsx'
+  with tempfile.TemporaryDirectory() as directory:
+   candidate=pathlib.Path(directory)/'candidate.xlsx'
+   with zipfile.ZipFile(template) as z:parts={n:z.read(n) for n in z.namelist()}
+   from xml.dom import minidom
+   styles=minidom.parseString(parts['xl/styles.xml'])
+   for border in styles.getElementsByTagNameNS(summary.NS['s'],'border'):
+    for child in list(border.childNodes):border.removeChild(child)
+   for fill in styles.getElementsByTagNameNS(summary.NS['s'],'patternFill'):
+    fill.setAttribute('patternType','solid')
+   parts['xl/styles.xml']=styles.toxml(encoding='utf-8')
+   with zipfile.ZipFile(candidate,'w') as z:
+    for name,data in parts.items():z.writestr(name,data)
+   before=summary.read_book(candidate);reference=summary.read_book(template)
+   with self.assertRaisesRegex(ValueError,'border changed'):
+    summary.verify_report_borders(before['现状调查表'],reference['现状调查表'],19,35)
+   payload=[{'name':'现状调查表','cols':19,'head':35,'last':35}]
+   self.assertGreater(summary.restore_style_components(template,candidate,'border',payload),0)
+   self.assertGreater(summary.restore_style_components(template,candidate,'fill',payload),0)
+   after=summary.read_book(candidate)
+   summary.verify_report_borders(after['现状调查表'],reference['现状调查表'],19,35)
+   summary.verify_preserved(before,after,summary.INPUT_NAMES)
+   self.assertEqual(summary.restore_style_components(template,candidate,'border',payload),0)
+   self.assertEqual(summary.restore_style_components(template,candidate,'fill',payload),0)
  def test_summary_restores_only_input_title_fonts(self):
   from xml.dom import minidom
   path=ROOT/'skills/forestry-survey-summary-tables/scripts/summary_tables.py'

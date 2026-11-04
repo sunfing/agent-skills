@@ -8,6 +8,7 @@ import math
 import os
 from pathlib import Path
 import posixpath
+import re
 import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
@@ -51,7 +52,7 @@ def read_book(path):
             shared = [''.join(t.text or '' for t in si.findall('.//s:t', NS)) for si in ET.fromstring(z.read('xl/sharedStrings.xml'))]
         result = {}
         styles = ET.fromstring(z.read('xl/styles.xml'))
-        for sh in wb.find('s:sheets', NS):
+        for sheet_index, sh in enumerate(wb.find('s:sheets', NS)):
             key = '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id'
             part = rels[sh.attrib[key]]
             part = part.lstrip('/') if part.startswith('/') else posixpath.normpath('xl/' + part)
@@ -66,7 +67,10 @@ def read_book(path):
                     value = float(value)
                     if value.is_integer(): value = int(value)
                 cells[c.attrib['r']] = {'value': value, 'formula': f.text if f is not None else None, 'shared_formula': f is not None and f.attrib.get('t') == 'shared', 'type': t, 'style': int(c.attrib.get('s', 0))}
-            result[sh.attrib['name']] = {'cells': cells, 'xml': xml, 'styles': styles, 'part': part}
+            names = {n.attrib['name']: n.text for n in wb.findall('s:definedNames/s:definedName', NS)
+                     if n.attrib.get('localSheetId') == str(sheet_index)}
+            result[sh.attrib['name']] = {'cells': cells, 'xml': xml, 'styles': styles, 'part': part,
+                                        'names': names, 'state': sh.attrib.get('state', 'visible')}
         if any(n.startswith('xl/externalLinks/externalLink') and n.endswith('.xml') for n in z.namelist()):
             raise ValueError('External workbook links are not supported')
         return result
@@ -139,6 +143,13 @@ def prepare(book, cfg):
         if text(v[35]) not in ('',cfg['use_nature']):raise ValueError(f'Use nature conflict: {ident}')
         area=number(v[7],f'occupied area {ident}',True)
         vol=number(v[26],f'approved tree stock {ident}') if lc=='乔木林地' else 0
+        for idx in (22,23,24,25,27):
+            if v[idx] not in (None,''):
+                number(v[idx],f'{INPUT_HEADERS[idx]} {ident}')
+        if v[24] not in (None,'') and v[24]>1:
+            raise ValueError(f'Canopy must be within 0..1, not a percentage: {ident}')
+        if v[27] not in (None,'') and int(v[27])!=v[27]:
+            raise ValueError(f'Tree count must be an integer: {ident}')
         records.append(dict(id=ident,source=rr,values=v,admin=tuple(map(text,v[:4])),own=v[11],land_class=lc,
                             land_type=lt,forest_category=fc,level=level,area=area,volume=vol))
     if not records:raise ValueError('No input records')
@@ -157,6 +168,8 @@ def prepare(book, cfg):
         if not keys:raise ValueError('Empty ecological records')
         if any(r['id'] not in covered and text(r['values'][17]) not in ('','其他区域','不涉及','无') for r in records):
             raise ValueError('Unmapped ecological involvement')
+        if any(r['id'] in covered and text(r['values'][17]) in ('','其他区域','不涉及','无') for r in records):
+            raise ValueError('Ecological configuration conflicts with 内业处理表: confirm involvement there first')
     else:raise ValueError('ecology mode must be confirmed')
     fee=cfg.get('fee',{})
     if fee.get('mode')=='not_applicable':
@@ -170,6 +183,13 @@ def prepare(book, cfg):
         for r in records:
             if r['land_class']=='乔木林地':number(r['values'][24],f'canopy {r["id"]}')
     cfg.setdefault('status_fields',{})
+    cfg['_identifier_formats']={}
+    for r in records:
+        for idx in (4,5,6):
+            address=f'{cfg["_columns"][idx]}{r["source"]}'
+            fmt=number_format(book['内业处理表'],book['内业处理表']['cells'].get(address,{}).get('style',0))
+            # Explicit zero padding is meaningful in identifiers. Never infer a width.
+            cfg['_identifier_formats'][address]=fmt if re.fullmatch('0+',fmt) else '0'
     allowed={'M3','D4','M4','R4','A14','A15','A20','A22','A24','A26','A28','A30','A34'}
     if set(cfg['status_fields'])-allowed:raise ValueError('Unsupported status_fields address')
     if '现状调查表' in book:
@@ -331,7 +351,20 @@ def build(records,cfg):
             first=min(r['detail'] for r in items);last=max(r['detail'] for r in items)
             detail['cells'][f'{c}{row}']=f'=SUMIFS({c}{first}:{c}{last},G{first}:G{last},"<>")'
             detail['checks'][f'{c}{row}']=expected(items,metric)
-    detail['formats']=[(f'H4:H{rr-1}','0.0000;-0.0000;;@'),(f'S4:U{rr-1}','0.0;-0.0;;@'),(f'W4:W{rr-1}','0.0;-0.0;;@')]
+    detail['formats']=[(f'E4:G{rr-1}','0'),(f'H4:H{rr-1}','0.0000;-0.0000;;@'),
+                       (f'S4:U{rr-1}','0.0;-0.0;;@'),(f'V4:V{rr-1}','0.00;-0.00;;@'),
+                       (f'W4:W{rr-1}','0.0;-0.0;;@'),(f'X4:X{rr-1}','0;-0;;@')]
+    detail['display_checks']={}
+    for r in records:
+        for idx,dc in [(4,'E'),(5,'F'),(6,'G')]:
+            fmt=cfg['_identifier_formats'].get(f'{columns[idx]}{r["source"]}','0')
+            addr=f'{dc}{r["detail"]}';detail['formats'].append((addr,fmt))
+            value=r['values'][idx]
+            if isinstance(value,(int,float)) and value>=0 and int(value)==value:
+                detail['display_checks'][addr]=str(int(value)).zfill(len(fmt))
+            elif isinstance(value,str):detail['display_checks'][addr]=value
+        value=r['values'][27]
+        detail['display_checks'][f'X{r["detail"]}']='' if value in (None,'',0) else str(int(value))
     owners=['计','国有','集体'];size=len(gs)*3;sheets=[detail]
     titles=['林地类型','现状地类','森林类别','林地保护等级']
     for n in range(1,5):
@@ -382,7 +415,9 @@ def build(records,cfg):
             s['cells'][f'A{row}']=reg['name'];totals.union(s,f'B{row}','area',[],'G',reg['parcel_ids'])
             c=3+2*ECO.index(reg['kind']);s['cells'][f'{col(c)}{row}']=reg['level'];totals.union(s,f'{col(c+1)}{row}','area',[],'G',reg['parcel_ids'])
         s['last']=5+len(cfg['ecology']['records'])
-    s['formats']=[(f'B6:J{s["last"]}','0.0000;-0.0000;;@')];sheets.append(s)
+    s['formats']=[(f'B6:J{s["last"]}','0.0000;-0.0000;;@')]
+    s['formats'] += [(f'{c}6:{c}{s["last"]}','@') for c in ('C','E','G','I')]
+    sheets.append(s)
     sheets.append(build_fee(records,cfg,gs,totals))
     status=make_sheet('现状调查表',35,19);status['last']=35;status['preserve_body']=True
     status['cells'].update(cfg['status_fields']);status['cells'].update({'A1':report_title(cfg,'现状调查表'),'D3':cfg['project_name'],'A16':report_title(cfg,'现状调查表（续）')})
@@ -446,10 +481,19 @@ def build_fee(records,cfg,gs,totals):
             if supported:s['checks'][f'G{row}']=amount
     s['last']=7+len(gs)*3;s['table_last']=s['last'];s['last']+=1
     note=HEBEI_BASIS+'。\n'+HEBEI_NOTE+'\n'+('规划区内' if fee['urban_planning_area'] else '规划区外')+'；'+fee['project_kind']+'。'
-    if fee['mode']=='reference':note+='本表仅为参考测算，不作为应缴金额；临时使用林地不再收取森林植被恢复费，实际恢复工程费用另计（国家林草局2023年第13号公告）。'
+    if fee['mode']=='reference':note+='本表仅为参考测算，不作为应缴金额。'
+    if cfg['use_nature']=='临时':note+='临时使用林地不再收取森林植被恢复费，实际恢复工程费用另计（国家林草局2023年第13号公告）。'
     merge(s,f'A{s["last"]}:M{s["last"]}',note);s['heights'][str(s['last'])]=100
+    s['style_rows']={str(s['last']):23}
     s['formats']=[(f'F8:M{s["table_last"]}','0.0000;-0.0000;;@'),(f'I8:I{s["table_last"]}','0.00;-0.00;;@'),(f'L8:L{s["table_last"]}','0.00;-0.00;;@')]
     return s
+
+
+def number_format(sheet, index):
+    styles=sheet['styles'];xf=styles.find('s:cellXfs',NS)[index]
+    nf=int(xf.attrib.get('numFmtId',0))
+    return next((n.attrib['formatCode'] for n in styles.findall('s:numFmts/s:numFmt',NS)
+                 if int(n.attrib['numFmtId'])==nf),{0:'General',1:'0',2:'0.00',49:'@'}.get(nf,str(nf)))
 
 
 def style_signature(sheet, index):
@@ -477,7 +521,7 @@ def template_fonts(payload, template):
             a,b=node.attrib['ref'].split(':');merged.append((*point(a),*point(b),a))
         groups={}
         for row in range(1,s['last']+1):
-            rr=row if row<=s['head'] else 9 if s['name']=='A.1' else s['head']+1
+            rr=s.get('style_rows',{}).get(str(row),row if row<=s['head'] else 9 if s['name']=='A.1' else s['head']+1)
             run=None;start=1
             for c in range(1,s['cols']+2):
                 signature=None
@@ -490,7 +534,7 @@ def template_fonts(payload, template):
                     def attr(tag,default):
                         node=font.find('s:'+tag,NS)
                         return node.attrib.get('val',default) if node is not None else default
-                    signature=(attr('name','宋体'),float(attr('sz',8)),font.find('s:b',NS) is not None,font.find('s:i',NS) is not None)
+                    signature=(attr('name','宋体'),float(attr('sz',8)),font.find('s:b',NS) is not None and attr('b','1') not in ('0','false'),font.find('s:i',NS) is not None and attr('i','1') not in ('0','false'))
                 if c==1:run=signature
                 elif signature!=run:
                     groups.setdefault(run,[]).append(f'{col(start)}{row}:{col(c-1)}{row}')
@@ -505,12 +549,43 @@ def template_fonts(payload, template):
             if chunk:s['font_formats'].append([','.join(chunk),*signature])
 
 
-def restore_input_title_fonts(source, candidate):
-    """Repair Excel's saved title font drift without resaving cached formulas.
+def report_layout(payload, template):
+    """Keep template headings/page boundaries as data, and validate emitted formats."""
+    template_fonts(payload,template)
+    for s in payload:
+        ref=template[s['name']]
+        s['cells']['A1']=val(ref,'A1')
+        if s['name']=='现状调查表':s['cells']['A16']=val(ref,'A16')
+        s['manual_breaks']=[int(n.attrib['id']) for n in ref['xml'].findall('s:rowBreaks/s:brk',NS)
+                            if n.attrib.get('man')=='1' and int(n.attrib['id'])<s['last']]
+        s['print_titles']=ref.get('names',{}).get('_xlnm.Print_Titles')
+        s['print_area']=f"'{s['name']}'!$A$1:${col(s['cols'])}${s['last']}"
+        s.setdefault('display_checks',{})
+
+
+def addresses(area):
+    def point(value):
+        letters=value.rstrip('0123456789');x=0
+        for ch in letters:x=x*26+ord(ch)-64
+        return x,int(value[len(letters):])
+    first,last=area.split(':') if ':' in area else (area,area)
+    x1,y1=point(first);x2,y2=point(last)
+    return [f'{col(x)}{y}' for y in range(y1,y2+1) for x in range(x1,x2+1)]
+
+
+def report_source_address(spec, address):
+    match=re.fullmatch(r'([A-Z]+)([0-9]+)',address);column,row=match.groups();row=int(row)
+    row=spec.get('style_rows',{}).get(str(row),row if row<=spec['head'] else 9 if spec['name']=='A.1' else spec['head']+1)
+    if spec['name']=='B.5' and column not in ('A','B','C'):column='D'
+    return f'{column}{row}'
+
+
+def restore_style_components(source, candidate, component="font", report_payload=None):
+    """Repair Excel's saved style drift without resaving cached formulas.
 
     Clone cell styles, never mutate a shared style used by report/body cells.
     DOM serialization keeps namespace declarations referenced by mc:Ignorable.
-    Only explicitly stored cells within each input sheet's A1 merge are touched.
+    Touch input title fonts, fixed report borders, or mapped report fills only.
     All other differences remain subject to validate_candidate.
     """
     if Path(source).resolve() == Path(candidate).resolve():
@@ -521,11 +596,11 @@ def restore_input_title_fonts(source, candidate):
         parts = {entry.filename: archive.read(entry) for entry in entries}
     styles = minidom.parseString(parts['xl/styles.xml'])
     uri = NS['s']
-    fonts = styles.getElementsByTagNameNS(uri, 'fonts')[0]
+    table = styles.getElementsByTagNameNS(uri, component+'s')[0]
     xfs = styles.getElementsByTagNameNS(uri, 'cellXfs')[0]
-    font_count = len(fonts.getElementsByTagNameNS(uri, 'font'))
+    component_count = len(table.getElementsByTagNameNS(uri, component))
     xf_nodes = list(xfs.getElementsByTagNameNS(uri, 'xf'))
-    font_ids, style_ids = {}, {}
+    component_ids, style_ids = {}, {}
     changed = 0
 
     def point(address):
@@ -534,7 +609,8 @@ def restore_input_title_fonts(source, candidate):
             column = column * 26 + ord(char) - 64
         return column, int(address[len(letters):])
 
-    for name in INPUT_NAMES:
+    targets={s['name']:s for s in report_payload if component=='fill' or s['name']!='B.5'} if report_payload is not None else dict.fromkeys(INPUT_NAMES)
+    for name in targets:
         if name not in before:
             continue
         old, new = before[name], after[name]
@@ -543,32 +619,38 @@ def restore_input_title_fonts(source, candidate):
             if merge.attrib['ref'].startswith('A1:'):
                 end = merge.attrib['ref'].split(':')[1]
         right, bottom = point(end)
+        if report_payload is not None:right,bottom=targets[name]['cols'],targets[name]['head']
         document = minidom.parseString(parts[new['part']])
         cells = {c.getAttribute('r'): c for c in document.getElementsByTagNameNS(uri, 'c')}
         sheet_changed = False
-        for address, cell in old['cells'].items():
+        source_cells=old['cells']
+        if report_payload is not None and component=='fill':
+            spec=targets[name];bottom=spec['last'];source_cells={}
+            for address in addresses(f'A1:{col(right)}{bottom}'):
+                source_cells[address]=old['cells'].get(report_source_address(spec,address),{'style':0})
+        for address, cell in source_cells.items():
             column, row = point(address)
             if column > right or row > bottom:
                 continue
             if address not in new['cells']:
-                raise ValueError(f'Missing preserved title cell: {name}!{address}')
+                raise ValueError(f'Missing style reference cell: {name}!{address}')
             old_xf = old['styles'].find('s:cellXfs', NS)[cell['style']]
-            old_font_id = int(old_xf.attrib.get('fontId', 0))
-            old_font = old['styles'].find('s:fonts', NS)[old_font_id]
+            old_component_id = int(old_xf.attrib.get(component+'Id', 0))
+            old_component = old['styles'].find('s:'+component+'s', NS)[old_component_id]
             new_style_id = new['cells'][address]['style']
             new_xf = new['styles'].find('s:cellXfs', NS)[new_style_id]
-            new_font = new['styles'].find('s:fonts', NS)[int(new_xf.attrib.get('fontId', 0))]
-            if ET.tostring(old_font) == ET.tostring(new_font):
+            new_component = new['styles'].find('s:'+component+'s', NS)[int(new_xf.attrib.get(component+'Id', 0))]
+            if ET.tostring(old_component) == ET.tostring(new_component):
                 continue
-            if old_font_id not in font_ids:
-                node = minidom.parseString(ET.tostring(old_font)).documentElement
-                fonts.appendChild(styles.importNode(node, True))
-                font_ids[old_font_id] = font_count
-                font_count += 1
-            key = (new_style_id, old_font_id)
+            if old_component_id not in component_ids:
+                node = minidom.parseString(ET.tostring(old_component)).documentElement
+                table.appendChild(styles.importNode(node, True))
+                component_ids[old_component_id] = component_count
+                component_count += 1
+            key = (new_style_id, old_component_id)
             if key not in style_ids:
                 xf = xf_nodes[new_style_id].cloneNode(True)
-                xf.setAttribute('fontId', str(font_ids[old_font_id]))
+                xf.setAttribute(component+'Id', str(component_ids[old_component_id]))
                 style_ids[key] = len(xf_nodes)
                 xfs.appendChild(xf); xf_nodes.append(xf)
             cells[address].setAttribute('s', str(style_ids[key]))
@@ -577,7 +659,7 @@ def restore_input_title_fonts(source, candidate):
             parts[new['part']] = document.toxml(encoding='utf-8')
     if not changed:
         return 0
-    fonts.setAttribute('count', str(font_count))
+    table.setAttribute('count', str(component_count))
     xfs.setAttribute('count', str(len(xf_nodes)))
     parts['xl/styles.xml'] = styles.toxml(encoding='utf-8')
     temporary = None
@@ -594,6 +676,19 @@ def restore_input_title_fonts(source, candidate):
     return changed
 
 
+def restore_input_title_fonts(source, candidate):
+    return restore_style_components(source,candidate)
+
+
+def verify_report_borders(sheet, reference, cols, head):
+    def border(sh,addr):
+        xf=sh['styles'].find('s:cellXfs',NS)[sh['cells'].get(addr,{}).get('style',0)]
+        return ET.tostring(sh['styles'].find('s:borders',NS)[int(xf.attrib.get('borderId',0))])
+    for addr in addresses(f'A1:{col(cols)}{head}'):
+        if addr in reference['cells'] and border(sheet,addr)!=border(reference,addr):
+            raise ValueError(f'Report template border changed: {addr}')
+
+
 def verify_preserved(before, after, retained):
     for sn in retained:
         x,y=before[sn],after[sn]
@@ -606,7 +701,9 @@ def verify_preserved(before, after, retained):
             pair=(a['style'],b['style'])
             if pair not in cache:cache[pair]=style_signature(x,pair[0])==style_signature(y,pair[1])
             if not cache[pair]:raise ValueError(f'Preserved style changed: {sn}!{key}')
-        for tag in ['mergeCells','cols','pageMargins','pageSetup','printOptions']:
+        for field in ('names','state'):
+            if x.get(field)!=y.get(field):raise ValueError(f'Preserved sheet setting changed: {sn}/{field}')
+        for tag in ['mergeCells','cols','pageMargins','pageSetup','printOptions','rowBreaks','colBreaks','headerFooter','sheetProtection']:
             aa,bb=deepcopy(x['xml'].find('s:'+tag,NS)),deepcopy(y['xml'].find('s:'+tag,NS))
             if tag=='mergeCells':
                 for node in (aa,bb):
@@ -623,6 +720,7 @@ def verify_preserved(before, after, retained):
 
 def validate_candidate(source, candidate, payload):
     a,b=read_book(source),read_book(candidate)
+    template=read_book(ROOT/'assets/report-headers.xlsx')
     retained=[n for n in a if n not in REPLACED_NAMES]
     if set(b)!=set(retained)|set(REPORT_NAMES):raise ValueError('Unexpected worksheet set')
     if [n for n in b if n in REPORT_NAMES] != REPORT_NAMES:raise ValueError('Unexpected report order')
@@ -631,6 +729,41 @@ def validate_candidate(source, candidate, payload):
     verify_preserved(a,b,retained)
     for s in payload:
         sh=b[s['name']]
+        if s['name']!='B.5':verify_report_borders(sh,template[s['name']],s['cols'],s['head'])
+        else:verify_report_borders(sh,template[s['name']],1,1)
+        # Named-style collisions must not import source-workbook highlights.
+        for addr in addresses(f'A1:{col(s["cols"])}{s["last"]}'):
+            xf=sh['styles'].find('s:cellXfs',NS)[sh['cells'].get(addr,{}).get('style',0)]
+            fill=sh['styles'].find('s:fills',NS)[int(xf.attrib.get('fillId',0))]
+            ref=template[s['name']];source_cell=ref['cells'].get(report_source_address(s,addr),{'style':0})
+            source_xf=ref['styles'].find('s:cellXfs',NS)[source_cell['style']]
+            source_fill=ref['styles'].find('s:fills',NS)[int(source_xf.attrib.get('fillId',0))]
+            if ET.tostring(fill)!=ET.tostring(source_fill):
+                raise ValueError(f'Unexpected report fill: {s["name"]}!{addr}')
+        formats={addr:fmt for area,fmt in s['formats'] for addr in addresses(area)}
+        for addr,fmt in formats.items():
+            # Excel adds optional escaping when serializing custom number formats.
+            actual=number_format(sh,sh['cells'].get(addr,{}).get('style',0))
+            if actual.replace('\\','')!=fmt.replace('\\',''):
+                raise ValueError(f'Number format mismatch: {s["name"]}!{addr}: {actual} != {fmt}')
+        breaks={int(n.attrib['id']) for n in sh['xml'].findall('s:rowBreaks/s:brk',NS) if n.attrib.get('man')=='1'}
+        if not set(s.get('manual_breaks',[]))<=breaks:raise ValueError(f'Missing manual page break: {s["name"]}')
+        if 'print_titles' in s and sh.get('names',{}).get('_xlnm.Print_Titles')!=s['print_titles']:
+            raise ValueError(f'Print titles changed: {s["name"]}')
+        if 'print_area' in s and sh.get('names',{}).get('_xlnm.Print_Area','').replace("'",'')!=s['print_area'].replace("'",''):
+            raise ValueError(f'Print area changed: {s["name"]}')
+        if s['name']=='B.5':
+            for addr in addresses(f'D4:{col(s["cols"])}{s["last"]}'):
+                # Merged followers inherit their anchor; inspect stored anchors only.
+                if addr not in sh['cells'] or val(sh,addr) in (None,''):continue
+                xf=sh['styles'].find('s:cellXfs',NS)[sh['cells'][addr]['style']];align=xf.find('s:alignment',NS)
+                if align is None or align.attrib.get('horizontal')!='center' or align.attrib.get('wrapText')!='1':
+                    raise ValueError(f'Expanded column style changed: B.5!{addr}')
+        for row in s.get('style_rows',{}):
+            xf=sh['styles'].find('s:cellXfs',NS)[sh['cells'][f'A{row}']['style']]
+            align=xf.find('s:alignment',NS)
+            if align is None or align.attrib.get('horizontal')!='left' or align.attrib.get('wrapText')!='1':
+                raise ValueError(f'Note alignment changed: {s["name"]}!A{row}')
         for addr,c in sh['cells'].items():
             if c['type']=='e' or (isinstance(c['value'],str) and c['value'].startswith('=')):raise ValueError(f'Formula error/text: {s["name"]}!{addr}')
         for addr,v in s['cells'].items():
@@ -665,6 +798,16 @@ def publish(manifest):
     print(json.dumps({'published':str(dest),'records':m['records'],'area_ha':m['area_ha'],'volume_m3':m['volume_m3']},ensure_ascii=False))
 
 
+def run_excel(job_path, validate_only=False, timeout=600):
+    command=['powershell.exe','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(ROOT/'scripts/excel_report.ps1'),'-Job',str(job_path)]
+    try:
+        subprocess.run(command+(['-ValidateOnly'] if validate_only else []),check=True,timeout=timeout)
+    finally:
+        # An interrupted PowerShell cannot execute its finally block. The same
+        # script verifies PID + start time before cleaning only its own Excel.
+        subprocess.run(command+['-CleanupOnly'],check=True,timeout=30)
+
+
 def main():
     ap=argparse.ArgumentParser(description=__doc__)
     ap.add_argument('input',type=Path,nargs='?');ap.add_argument('--config',type=Path)
@@ -682,16 +825,18 @@ def main():
     if REPLACED_NAMES.intersection(book) and not args.replace_sheets:ap.error('Existing legacy or B-series report sheets require --replace-sheets after user authorization')
     cfg=json.loads(args.config.read_text(encoding='utf-8-sig'))
     records=prepare(book,cfg);payload=build(records,cfg)
-    template_fonts(payload,read_book(ROOT/'assets/report-headers.xlsx'))
+    report_layout(payload,read_book(ROOT/'assets/report-headers.xlsx'))
     stage=args.stage_dir.resolve() if args.stage_dir else Path(tempfile.mkdtemp(prefix='forestry-summary-'))
     if args.stage_dir:stage.mkdir(exist_ok=False,parents=True)
     candidate=stage/'candidate.xlsx'
     job={'source':str(source),'template':str(ROOT/'assets/report-headers.xlsx'),'candidate':str(candidate),'stage':str(stage),'sheets':payload,'replace_names':sorted(REPLACED_NAMES),'input_names':[n for n in INPUT_NAMES if n in book]}
     job_path=stage/'job.json';job_path.write_text(json.dumps(job,ensure_ascii=False),encoding='utf-8-sig')
-    subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(ROOT/'scripts/excel_report.ps1'),'-Job',str(job_path)],check=True,timeout=600)
+    run_excel(job_path)
     restore_input_title_fonts(source,candidate)
+    restore_style_components(ROOT/'assets/report-headers.xlsx',candidate,'border',payload)
+    restore_style_components(ROOT/'assets/report-headers.xlsx',candidate,'fill',payload)
     validate_candidate(source,candidate,payload)
-    subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(ROOT/'scripts/excel_report.ps1'),'-Job',str(job_path),'-ValidateOnly'],check=True,timeout=600)
+    run_excel(job_path,validate_only=True)
     validate_candidate(source,candidate,payload)
     if digest(source)!=original:raise ValueError('Source changed during generation')
     m={'source':str(source),'output':str(output),'source_hash':original,'candidate_hash':digest(candidate),'records':len(records),'area_ha':expected(records,'area'),'volume_m3':expected(records,'volume')}
