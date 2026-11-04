@@ -190,7 +190,7 @@ def usage_type(path):
     if "临时" in n: return "临时"
     return ""
 
-def write_workbook(path,rows,summary,zone,small_threshold,b8_rows):
+def write_workbook(path,rows,summary,zone,small_threshold,b8_rows,usage):
     try: import xlsxwriter
     except ImportError as e: raise ConversionError("生成 Excel 需要 XlsxWriter，请安装 requirements.txt。") from e
     path.parent.mkdir(parents=True,exist_ok=True)
@@ -267,18 +267,24 @@ def write_workbook(path,rows,summary,zone,small_threshold,b8_rows):
     for c,w in enumerate([10,12,14,14,12,14,10,18]): sm.set_column(c,c,w)
     sm.freeze_panes(1,0)
 
-    b8=wb.add_worksheet("附表B.8三栏版")
+    b8=wb.add_worksheet("B.8")
+    b8.hide_gridlines(2)
     bt=wb.add_format({"bold":True,"font_size":14,"font_name":"宋体","align":"center","valign":"vcenter"})
     bh=wb.add_format({"font_size":10,"font_name":"宋体","align":"center","valign":"vcenter","text_wrap":True,"border":1})
-    bc=wb.add_format({"font_size":9.5,"font_name":"宋体","align":"center","valign":"vcenter","border":1})
+    bc=wb.add_format({"font_size":9.5,"font_name":"宋体","align":"center","valign":"vcenter","border":1,"num_format":"0"})
     bn=wb.add_format({"font_size":9.5,"font_name":"宋体","align":"center","valign":"vcenter","border":1,"num_format":"0.000"})
-    for c in (0,3,6): b8.set_column(c,c,9)
-    for c in (1,2,4,5,7,8): b8.set_column(c,c,18)
-    per=max(10,int(b8_rows)); per_section=per*3; sections=math.ceil(len(rows)/per_section); breaks=[]
+    # Keep the three blocks visually close to the existing report template.
+    for c in (0,4,8): b8.set_column(c,c,4.91)
+    for c in (1,5,9): b8.set_column(c,c,11.36)
+    for c in (2,6,10): b8.set_column(c,c,12.36)
+    for c in (3,7): b8.set_column(c,c,1.63)
+    per=max(10,int(b8_rows)); per_section=per*3; sections=math.ceil(len(rows)/per_section); section_span=per+2; breaks=[]
+    title_suffix=f"{usage}使用林地" if usage else "使用林地"
     for sec in range(sections):
-        base=sec*(per+3)
-        b8.merge_range(base,0,base,8,"表B.8  项目使用林地小班位置拐点坐标表",bt)
+        base=sec*section_span
+        b8.merge_range(base,0,base,10,f"表B.8  {title_suffix}小班界址拐点坐标表",bt)
         for c,h in enumerate(["地块\n序号","x","y"]*3): b8.write(base+1,c,h,bh)
+        b8.set_row(base,17.5); b8.set_row(base+1,26)
         for ri in range(per):
             sr=base+2+ri
             for block in range(3):
@@ -287,9 +293,10 @@ def write_workbook(path,rows,summary,zone,small_threshold,b8_rows):
                     r=rows[idx]; b8.write(sr,c0,r.parcel,bc); b8.write_number(sr,c0+1,r.northing_x,bn); b8.write_number(sr,c0+2,r.easting_y,bn)
                 else:
                     for c in range(c0,c0+3): b8.write_blank(sr,c,None,bc)
-        if sec<sections-1: breaks.append(base+per+3)
+        if sec<sections-1: breaks.append(base+section_span)
     if breaks: b8.set_h_pagebreaks(breaks)
-    b8.set_portrait(); b8.set_paper(9); b8.fit_to_pages(1,0); b8.set_margins(0.25,0.25,0.35,0.35)
+    b8.set_portrait(); b8.set_paper(9); b8.set_margins(0.25,0.25,0.35,0.35)
+    b8.repeat_rows(0,1); b8.print_area(0,0,sections*section_span-1,10)
     wb.close()
 
 def report_data(inp,out,rows,summary,zone,resolved,threshold):
@@ -315,7 +322,7 @@ def main(argv=None):
         headers,raw=read_table(inp); parsed,resolved=parse_rows(headers,raw,a.parcel_field)
         zone=detect_zone(parsed,a.expected_zone); rows,summary=build_output_rows(parsed,a.closure_tolerance)
         rep=report_data(inp,out,rows,summary,zone,resolved,a.small_area_threshold)
-        if not a.check_only: write_workbook(out,rows,summary,zone,a.small_area_threshold,a.b8_rows)
+        if not a.check_only: write_workbook(out,rows,summary,zone,a.small_area_threshold,a.b8_rows,usage_type(inp))
         if a.json: print(json.dumps(rep,ensure_ascii=False,indent=2))
         else:
             print(f"[OK] 输入：{inp}"); print(f"[OK] 带号：Zone {zone}"); print(f"[OK] 地块数：{rep['parcels']}")

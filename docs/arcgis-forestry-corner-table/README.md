@@ -14,7 +14,9 @@ The workbook contains:
 - `报批文本`
 - `核查辅助`
 - `地块汇总`
-- `附表B.8三栏版`
+- `B.8` (three-column layout for copying into reports)
+
+`B.8` lays out three `parcel / x / y` blocks per page, keeps coordinates at three decimals, and derives the title from the input filename when it contains the Chinese `永久` or `临时` usage marker.
 
 Coordinate convention:
 
