@@ -106,3 +106,5 @@ python "$env:USERPROFILE\.codex\skills\.system\skill-installer\scripts\install-s
 Skill 会检查必要字段、带号一致性、坐标量级、面环闭合和唯一顶点数量；保留 ArcGIS 原始顶点顺序；面积 `<= 0.0001 ha` 默认仅提示复核，不自动删除。
 
 详细字段别名、森林类别和保护等级映射见 Skill 目录下的 `references/workflow.md`。
+
+B.8 数据区为 A:C、E:G、I:K，D、H 为空隔列。每段 50 行数据，另加标题和表头；续表标题带“（续）”。保留核定的精确列宽与行高，不自动调整列宽。

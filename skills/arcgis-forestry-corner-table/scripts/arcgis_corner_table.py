@@ -195,6 +195,9 @@ def write_workbook(path,rows,summary,zone,small_threshold,b8_rows,usage):
     except ImportError as e: raise ConversionError("生成 Excel 需要 XlsxWriter，请安装 requirements.txt。") from e
     path.parent.mkdir(parents=True,exist_ok=True)
     wb=xlsxwriter.Workbook(str(path))
+    # Excel measures column widths using the Normal font, not the cell font.
+    wb.formats[0].set_font_name("宋体")
+    plain=wb.add_format({"font_name":"Calibri","font_size":11})
     header=wb.add_format({"bold":True,"font_color":"#FFFFFF","bg_color":"#2F75B5","align":"center","valign":"vcenter","border":1})
     center=wb.add_format({"align":"center","valign":"vcenter","border":1})
     coord=wb.add_format({"align":"center","valign":"vcenter","border":1,"num_format":"0.000"})
@@ -236,7 +239,7 @@ def write_workbook(path,rows,summary,zone,small_threshold,b8_rows,usage):
     txt.merge_range("A1:B1","拐点坐标文本（可直接复制到报批坐标文件）",wb.add_format({"bold":True,"font_size":14,"align":"center"}))
     attrs=[("[属性描述]",""),("坐标系","2000国家大地坐标系"),("几度分带","3"),("投影类型","高斯克吕格"),
            ("计算单位","米"),("带号",str(zone)),("精度","0.001")]
-    for rr,(a,b) in enumerate(attrs,start=2): txt.write(rr,0,a,label); txt.write(rr,1,b)
+    for rr,(a,b) in enumerate(attrs,start=2): txt.write(rr,0,a,label); txt.write(rr,1,b,plain)
     txt.write(10,0,"[地块坐标]",label); rr=11; prev=None
     for r in rows:
         key=(r.parcel,r.ring)
@@ -273,22 +276,21 @@ def write_workbook(path,rows,summary,zone,small_threshold,b8_rows,usage):
     bh=wb.add_format({"font_size":10,"font_name":"宋体","align":"center","valign":"vcenter","text_wrap":True,"border":1})
     bc=wb.add_format({"font_size":9.5,"font_name":"宋体","align":"center","valign":"vcenter","border":1,"num_format":"0"})
     bn=wb.add_format({"font_size":9.5,"font_name":"宋体","align":"center","valign":"vcenter","border":1,"num_format":"0.000"})
-    # Keep the three blocks visually close to the existing report template.
-    for c in (0,4,8): b8.set_column(c,c,4.91)
-    for c in (1,5,9): b8.set_column(c,c,11.36)
-    for c in (2,6,10): b8.set_column(c,c,12.36)
-    for c in (3,7): b8.set_column(c,c,1.63)
+    # Character widths are restored after export to avoid XlsxWriter's padding.
+    b8.set_default_row(14)
+    b8.set_zoom(85)
     per=max(10,int(b8_rows)); per_section=per*3; sections=math.ceil(len(rows)/per_section); section_span=per+2; breaks=[]
     title_suffix=f"{usage}使用林地" if usage else "使用林地"
     for sec in range(sections):
         base=sec*section_span
-        b8.merge_range(base,0,base,10,f"表B.8  {title_suffix}小班界址拐点坐标表",bt)
-        for c,h in enumerate(["地块\n序号","x","y"]*3): b8.write(base+1,c,h,bh)
+        b8.merge_range(base,0,base,10,f"表B.8  {title_suffix}小班界址拐点坐标表"+("（续）" if sec else ""),bt)
+        for block in range(3):
+            for c,h in enumerate(["地块\n序号","x","y"]): b8.write(base+1,block*4+c,h,bh)
         b8.set_row(base,17.5); b8.set_row(base+1,26)
         for ri in range(per):
             sr=base+2+ri
             for block in range(3):
-                idx=sec*per_section+block*per+ri; c0=block*3
+                idx=sec*per_section+block*per+ri; c0=block*4
                 if idx<len(rows):
                     r=rows[idx]; b8.write(sr,c0,r.parcel,bc); b8.write_number(sr,c0+1,r.northing_x,bn); b8.write_number(sr,c0+2,r.easting_y,bn)
                 else:
@@ -296,8 +298,16 @@ def write_workbook(path,rows,summary,zone,small_threshold,b8_rows,usage):
         if sec<sections-1: breaks.append(base+section_span)
     if breaks: b8.set_h_pagebreaks(breaks)
     b8.set_portrait(); b8.set_paper(9); b8.set_margins(0.25,0.25,0.35,0.35)
-    b8.repeat_rows(0,1); b8.print_area(0,0,sections*section_span-1,10)
+    b8.print_area(0,0,sections*section_span-1,10)
     wb.close()
+    from openpyxl import load_workbook
+    result=load_workbook(path)
+    report=result["B.8"]
+    for columns,width in (("AEI",4.90625),("BFJ",11.36328125),
+                          ("CGK",12.36328125),("DH",1.6328125)):
+        for column in columns: report.column_dimensions[column].width=width
+    result.save(path)
+    result.close()
 
 def report_data(inp,out,rows,summary,zone,resolved,threshold):
     return {"input":str(inp),"output":str(out),"zone":zone,"parcels":len(summary),

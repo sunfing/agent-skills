@@ -61,6 +61,42 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(out.parent, inp.parent)
         self.assertEqual(out.name, "临时林地_拐点坐标表.xlsx")
 
+    @unittest.skipUnless(importlib.util.find_spec('xlsxwriter') and importlib.util.find_spec('openpyxl'),
+                         'requires declared Skill spreadsheet dependencies')
+    def test_b8_layout_and_record_order(self):
+        from openpyxl import load_workbook
+        points=[]
+        for parcel in range(1,40):
+            for x,y in [(0,0),(10,0),(10,10),(0,0)]:
+                points.append(self.p(len(points)+2,parcel,39603000+x,4573000+y))
+        rows,summary=corner.build_output_rows(points,0.001)
+        with tempfile.TemporaryDirectory() as td:
+            path=Path(td)/'report.xlsx'
+            corner.write_workbook(path,rows,summary,39,0.0001,50,'临时')
+            wb=load_workbook(path); ws=wb['B.8']
+            self.assertEqual(ws.sheet_format.defaultRowHeight,14)
+            self.assertEqual(ws.sheet_view.zoomScale,85)
+            self.assertIsNone(ws.print_title_rows)
+            self.assertEqual([b.id for b in ws.row_breaks.brk],[52])
+            self.assertTrue(ws['A53'].value.endswith('（续）'))
+            for cols,width in [('AEI',4.90625),('BFJ',11.36328125),('CGK',12.36328125),('DH',1.6328125)]:
+                for col in cols: self.assertEqual(ws.column_dimensions[col].width,width)
+            actual=[]
+            for base in (1,53):
+                for col in (1,5,9):
+                    self.assertEqual([ws.cell(base+1,col+i).value for i in range(3)],['地块\n序号','x','y'])
+                    for row in range(base+2,base+52):
+                        values=tuple(ws.cell(row,col+i).value for i in range(3))
+                        if values[0] is not None:
+                            actual.append(values)
+                            self.assertEqual(ws.cell(row,col+1).number_format,'0.000')
+                for row in range(base+1,base+52):
+                    for col in (4,8):
+                        self.assertIsNone(ws.cell(row,col).value)
+                        self.assertIsNone(ws.cell(row,col).border.left.style)
+            self.assertEqual(actual,[(r.parcel,r.northing_x,r.easting_y) for r in rows])
+            wb.close()
+
     def test_check_only_csv(self):
         data="序号,面积,地类,森林类,保护等,POINT_X,POINT_Y\n" \
              "1,0.1,乔木林地,022,4,39603000,4573000\n" \

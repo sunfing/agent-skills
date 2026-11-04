@@ -94,3 +94,5 @@ python ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github
 ```
 
 See the Chinese guide for Windows PowerShell examples and detailed forestry workflow notes.
+
+B.8 uses A:C, E:G and I:K, with blank spacer columns D and H. Each section has 50 data rows plus a title and header; subsequent titles include `（续）`. Exact report dimensions are preserved rather than auto-fitting columns.
