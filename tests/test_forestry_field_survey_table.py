@@ -127,6 +127,70 @@ class SurveyTests(unittest.TestCase):
    }
    for sheet in sheets:self.assertEqual(sheet['cells']['A1'],expected[sheet['name']])
    self.assertEqual(sheets[0]['cells']['A16'],'建设项目使用林地现状调查表（续）')
+ def test_summary_restores_only_input_title_fonts(self):
+  from xml.dom import minidom
+  path=ROOT/'skills/forestry-survey-summary-tables/scripts/summary_tables.py'
+  spec=importlib.util.spec_from_file_location('summary_fonts',path)
+  summary=importlib.util.module_from_spec(spec);spec.loader.exec_module(summary)
+  uri=summary.NS['s']
+  with tempfile.TemporaryDirectory() as directory:
+   source=pathlib.Path(directory)/'source.xlsx';candidate=pathlib.Path(directory)/'candidate.xlsx'
+   with zipfile.ZipFile(path.parents[1]/'assets/report-headers.xlsx') as archive:
+    parts={n:archive.read(n) for n in archive.namelist()}
+   styles=minidom.parseString(parts['xl/styles.xml'])
+   fonts=styles.getElementsByTagNameNS(uri,'fonts')[0];xfs=styles.getElementsByTagNameNS(uri,'cellXfs')[0]
+   # Different source fonts prove restoration is source-driven, not hardcoded 11pt.
+   for index,size in enumerate([11,13,15],1):
+    sheet=minidom.parseString(parts[f'xl/worksheets/sheet{index}.xml'])
+    font=styles.createElementNS(uri,'font')
+    for tag,value in [('name','宋体'),('sz',str(size)),('b','1'),('i','1' if index==2 else '0')]:
+     node=styles.createElementNS(uri,tag);node.setAttribute('val',value);font.appendChild(node)
+    fonts.appendChild(font);font_id=len(fonts.getElementsByTagNameNS(uri,'font'))-1
+    for cell in sheet.getElementsByTagNameNS(uri,'c'):
+     if not cell.getAttribute('r').rstrip('0123456789')+'1'==cell.getAttribute('r'):continue
+     xf=xfs.getElementsByTagNameNS(uri,'xf')[int(cell.getAttribute('s') or '0')].cloneNode(True)
+     xf.setAttribute('fontId',str(font_id));xfs.appendChild(xf)
+     cell.setAttribute('s',str(len(xfs.getElementsByTagNameNS(uri,'xf'))-1))
+    # Keep namespace declarations that a naive ET rewrite could discard.
+    sheet.documentElement.setAttribute('xmlns:mc','http://schemas.openxmlformats.org/markup-compatibility/2006')
+    sheet.documentElement.setAttribute('xmlns:testext','urn:title-font-test')
+    sheet.documentElement.setAttribute('mc:Ignorable','testext')
+    parts[f'xl/worksheets/sheet{index}.xml']=sheet.toxml(encoding='utf-8')
+   fonts.setAttribute('count',str(len(fonts.getElementsByTagNameNS(uri,'font'))))
+   xfs.setAttribute('count',str(len(xfs.getElementsByTagNameNS(uri,'xf'))))
+   parts['xl/styles.xml']=styles.toxml(encoding='utf-8')
+   def write(destination,items):
+    with zipfile.ZipFile(destination,'w',zipfile.ZIP_DEFLATED) as archive:
+     for name,value in items.items():archive.writestr(name,value)
+   write(source,parts)
+   # Reproduce font drift throughout the merged title, not merely A1.
+   changed=dict(parts)
+   styles=minidom.parseString(parts['xl/styles.xml'])
+   fonts=styles.getElementsByTagNameNS(uri,'fonts')[0]
+   for font in list(fonts.getElementsByTagNameNS(uri,'font'))[-3:]:
+    font.getElementsByTagNameNS(uri,'sz')[0].setAttribute('val','8')
+    font.getElementsByTagNameNS(uri,'b')[0].setAttribute('val','0')
+   changed['xl/styles.xml']=styles.toxml(encoding='utf-8');write(candidate,changed)
+   before=summary.read_book(source)
+   with self.assertRaisesRegex(ValueError,'Preserved style changed'):
+    summary.verify_preserved(before,summary.read_book(candidate),summary.INPUT_NAMES)
+   self.assertGreater(summary.restore_input_title_fonts(source,candidate),3)
+   after=summary.read_book(candidate)
+   summary.verify_preserved(before,after,list(before))
+   with zipfile.ZipFile(candidate) as archive:
+    for name,data in parts.items():
+     if name not in ['xl/styles.xml']+[f'xl/worksheets/sheet{i}.xml' for i in range(1,4)]:
+      self.assertEqual(archive.read(name),data)
+    self.assertIn(b'xmlns:testext="urn:title-font-test"',archive.read('xl/worksheets/sheet1.xml'))
+   digest=summary.digest(candidate)
+   self.assertEqual(summary.restore_input_title_fonts(source,candidate),0)
+   self.assertEqual(summary.digest(candidate),digest)
+   with self.assertRaisesRegex(ValueError,'separate candidate'):
+    summary.restore_input_title_fonts(source,source)
+   # A body change must still block delivery; title restoration is not a bypass.
+   after['内业处理表']['cells']['A4']['value']='unexpected edit'
+   with self.assertRaisesRegex(ValueError,'Preserved cell changed'):
+    summary.verify_preserved(before,after,summary.INPUT_NAMES)
  def test_template_clean_and_styled(self):
   ns={'m':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
   with zipfile.ZipFile(SKILL/'assets/A.1.xlsx') as z:

@@ -11,6 +11,7 @@ import posixpath
 import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
+from xml.dom import minidom
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -65,7 +66,7 @@ def read_book(path):
                     value = float(value)
                     if value.is_integer(): value = int(value)
                 cells[c.attrib['r']] = {'value': value, 'formula': f.text if f is not None else None, 'shared_formula': f is not None and f.attrib.get('t') == 'shared', 'type': t, 'style': int(c.attrib.get('s', 0))}
-            result[sh.attrib['name']] = {'cells': cells, 'xml': xml, 'styles': styles}
+            result[sh.attrib['name']] = {'cells': cells, 'xml': xml, 'styles': styles, 'part': part}
         if any(n.startswith('xl/externalLinks/externalLink') and n.endswith('.xml') for n in z.namelist()):
             raise ValueError('External workbook links are not supported')
         return result
@@ -504,6 +505,95 @@ def template_fonts(payload, template):
             if chunk:s['font_formats'].append([','.join(chunk),*signature])
 
 
+def restore_input_title_fonts(source, candidate):
+    """Repair Excel's saved title font drift without resaving cached formulas.
+
+    Clone cell styles, never mutate a shared style used by report/body cells.
+    DOM serialization keeps namespace declarations referenced by mc:Ignorable.
+    Only explicitly stored cells within each input sheet's A1 merge are touched.
+    All other differences remain subject to validate_candidate.
+    """
+    if Path(source).resolve() == Path(candidate).resolve():
+        raise ValueError('Title font restoration requires a separate candidate')
+    before, after = read_book(source), read_book(candidate)
+    with zipfile.ZipFile(candidate) as archive:
+        entries = archive.infolist()
+        parts = {entry.filename: archive.read(entry) for entry in entries}
+    styles = minidom.parseString(parts['xl/styles.xml'])
+    uri = NS['s']
+    fonts = styles.getElementsByTagNameNS(uri, 'fonts')[0]
+    xfs = styles.getElementsByTagNameNS(uri, 'cellXfs')[0]
+    font_count = len(fonts.getElementsByTagNameNS(uri, 'font'))
+    xf_nodes = list(xfs.getElementsByTagNameNS(uri, 'xf'))
+    font_ids, style_ids = {}, {}
+    changed = 0
+
+    def point(address):
+        letters = address.rstrip('0123456789'); column = 0
+        for char in letters:
+            column = column * 26 + ord(char) - 64
+        return column, int(address[len(letters):])
+
+    for name in INPUT_NAMES:
+        if name not in before:
+            continue
+        old, new = before[name], after[name]
+        end = 'A1'
+        for merge in old['xml'].findall('s:mergeCells/s:mergeCell', NS):
+            if merge.attrib['ref'].startswith('A1:'):
+                end = merge.attrib['ref'].split(':')[1]
+        right, bottom = point(end)
+        document = minidom.parseString(parts[new['part']])
+        cells = {c.getAttribute('r'): c for c in document.getElementsByTagNameNS(uri, 'c')}
+        sheet_changed = False
+        for address, cell in old['cells'].items():
+            column, row = point(address)
+            if column > right or row > bottom:
+                continue
+            if address not in new['cells']:
+                raise ValueError(f'Missing preserved title cell: {name}!{address}')
+            old_xf = old['styles'].find('s:cellXfs', NS)[cell['style']]
+            old_font_id = int(old_xf.attrib.get('fontId', 0))
+            old_font = old['styles'].find('s:fonts', NS)[old_font_id]
+            new_style_id = new['cells'][address]['style']
+            new_xf = new['styles'].find('s:cellXfs', NS)[new_style_id]
+            new_font = new['styles'].find('s:fonts', NS)[int(new_xf.attrib.get('fontId', 0))]
+            if ET.tostring(old_font) == ET.tostring(new_font):
+                continue
+            if old_font_id not in font_ids:
+                node = minidom.parseString(ET.tostring(old_font)).documentElement
+                fonts.appendChild(styles.importNode(node, True))
+                font_ids[old_font_id] = font_count
+                font_count += 1
+            key = (new_style_id, old_font_id)
+            if key not in style_ids:
+                xf = xf_nodes[new_style_id].cloneNode(True)
+                xf.setAttribute('fontId', str(font_ids[old_font_id]))
+                style_ids[key] = len(xf_nodes)
+                xfs.appendChild(xf); xf_nodes.append(xf)
+            cells[address].setAttribute('s', str(style_ids[key]))
+            changed += 1; sheet_changed = True
+        if sheet_changed:
+            parts[new['part']] = document.toxml(encoding='utf-8')
+    if not changed:
+        return 0
+    fonts.setAttribute('count', str(font_count))
+    xfs.setAttribute('count', str(len(xf_nodes)))
+    parts['xl/styles.xml'] = styles.toxml(encoding='utf-8')
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=Path(candidate).parent, suffix='.xlsx', delete=False) as f:
+            temporary = Path(f.name)
+        with zipfile.ZipFile(temporary, 'w') as archive:
+            for entry in entries:
+                archive.writestr(entry, parts[entry.filename])
+        os.replace(temporary, candidate)
+    finally:
+        if temporary is not None and temporary.exists():
+            temporary.unlink()
+    return changed
+
+
 def verify_preserved(before, after, retained):
     for sn in retained:
         x,y=before[sn],after[sn]
@@ -599,6 +689,9 @@ def main():
     job={'source':str(source),'template':str(ROOT/'assets/report-headers.xlsx'),'candidate':str(candidate),'stage':str(stage),'sheets':payload,'replace_names':sorted(REPLACED_NAMES),'input_names':[n for n in INPUT_NAMES if n in book]}
     job_path=stage/'job.json';job_path.write_text(json.dumps(job,ensure_ascii=False),encoding='utf-8-sig')
     subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(ROOT/'scripts/excel_report.ps1'),'-Job',str(job_path)],check=True,timeout=600)
+    restore_input_title_fonts(source,candidate)
+    validate_candidate(source,candidate,payload)
+    subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(ROOT/'scripts/excel_report.ps1'),'-Job',str(job_path),'-ValidateOnly'],check=True,timeout=600)
     validate_candidate(source,candidate,payload)
     if digest(source)!=original:raise ValueError('Source changed during generation')
     m={'source':str(source),'output':str(output),'source_hash':original,'candidate_hash':digest(candidate),'records':len(records),'area_ha':expected(records,'area'),'volume_m3':expected(records,'volume')}

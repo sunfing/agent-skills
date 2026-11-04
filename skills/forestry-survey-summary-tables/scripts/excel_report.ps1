@@ -1,4 +1,4 @@
-﻿param([Parameter(Mandatory=$true)][string]$Job)
+﻿param([Parameter(Mandatory=$true)][string]$Job, [switch]$ValidateOnly)
 $ErrorActionPreference='Stop'
 $j=Get-Content -LiteralPath $Job -Raw -Encoding UTF8 | ConvertFrom-Json
 $e=$null;$b=$null;$t=$null;$fontChecks=@()
@@ -15,6 +15,15 @@ try {
    $fontChecks+=@{sheet=$name;address='A1';name=$font.Name;size=$font.Size;bold=$font.Bold;italic=$font.Italic}
   }
  }
+ foreach($d in $j.sheets){
+  $ref=$t.Worksheets.Item($d.name)
+  $addresses=if($d.name -eq '现状调查表'){@('A1','A16','D3','D7')}else{@('A1')}
+  foreach($address in $addresses){
+   $font=$ref.Range($address).Font
+   $fontChecks+=@{sheet=$d.name;address=$address;name=$font.Name;size=$font.Size;bold=$font.Bold;italic=$font.Italic}
+  }
+ }
+ if(-not $ValidateOnly){
  foreach($ws in @($b.Worksheets)){if($ws.Name -in $j.replace_names){$ws.Delete()}}
  $anchor=$b.Worksheets.Item($b.Worksheets.Count)
  foreach($d in $j.sheets){$s=$b.Worksheets.Add([Type]::Missing,$anchor);$s.Name=$d.name;$anchor=$s}
@@ -56,11 +65,6 @@ try {
   $all=$s.Range($s.Cells.Item(1,1),$s.Cells.Item($last,$nc));$all.Interior.Pattern=-4142
   foreach($prop in @('PaperSize','Orientation','Zoom','FitToPagesWide','FitToPagesTall','LeftMargin','RightMargin','TopMargin','BottomMargin','HeaderMargin','FooterMargin','CenterHorizontally','CenterVertically','PrintTitleRows','PrintTitleColumns','LeftHeader','CenterHeader','RightHeader','LeftFooter','CenterFooter','RightFooter')){$s.PageSetup.$prop=$ref.PageSetup.$prop}
   $s.PageSetup.PrintArea=$all.Address()
-  $addresses=if($d.name -eq '现状调查表'){@('A1','D3','D7')}else{@('A1')}
-  foreach($address in $addresses){
-   $font=$ref.Range($address).Font
-   $fontChecks+=@{sheet=$d.name;address=$address;name=$font.Name;size=$font.Size;bold=$font.Bold;italic=$font.Italic}
-  }
   $b.Activate();$s.Activate();$e.ActiveWindow.View=2;$e.ActiveWindow.Zoom=100
  }
  $order=@($j.input_names)+@($j.sheets | ForEach-Object {$_.name})
@@ -94,9 +98,13 @@ try {
  }
  $measure.Delete()
  $t.Close($false);$t=$null;$e.Calculation=-4105;$e.CalculateFullRebuild()
- foreach($d in $j.sheets){$b.Worksheets.Item($d.name).ExportAsFixedFormat(0,(Join-Path $j.stage "$($d.name).pdf"))}
  $b.Worksheets.Item('内业处理表').Activate()
  $b.SaveAs($j.candidate,51);$b.Close($false);$b=$null
+ Write-Output 'Excel candidate saved; title restoration and native validation pending'
+ return
+ }
+ $b.Close($false);$b=$null;$t.Close($false);$t=$null
+ # Reopen the repaired package read-only; do not Save it through Excel again.
  $b=$e.Workbooks.Open($j.candidate,0,$true)
  foreach($check in $fontChecks){
   $font=$b.Worksheets.Item($check.sheet).Range($check.address).Font
@@ -122,7 +130,8 @@ try {
    }
   }
  }
- Write-Output 'Excel save, reopen, formula and subtotal verification passed'
+ foreach($d in $j.sheets){$b.Worksheets.Item($d.name).ExportAsFixedFormat(0,(Join-Path $j.stage "$($d.name).pdf"))}
+ Write-Output 'Excel reopen, title fonts, formula and subtotal verification passed'
 }catch{
  Write-Output "Sheet: $($d.name); cell: $($p.Name)"
  Write-Output $_.InvocationInfo.PositionMessage
