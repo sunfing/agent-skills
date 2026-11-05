@@ -169,12 +169,83 @@ class SurveyTests(unittest.TestCase):
   sheets=summary.build(summary.prepare(book,cfg),cfg);fee=next(s for s in sheets if s['name']=='B.7')
   self.assertNotIn('临时使用林地',fee['cells'][f'A{fee["last"]}'])
   self.assertIn(str(fee['last']),fee['style_rows'])
- def test_summary_layout_uses_template_and_page_boundary(self):
+ def test_summary_layout_uses_template_without_print_settings(self):
   summary,book,cfg=self.summary_fixture();sheets=summary.build(summary.prepare(book,cfg),cfg)
   book['现状调查表']['cells']['A1']['value']='已核定模板标题'
   summary.report_layout(sheets,book)
   self.assertEqual(sheets[0]['cells']['A1'],'已核定模板标题')
-  self.assertEqual(sheets[0]['manual_breaks'],[15])
+  for sheet in sheets:
+   for key in ('manual_breaks','print_titles','print_area'):self.assertNotIn(key,sheet)
+ def test_summary_restores_column_defaults_with_new_style_indexes(self):
+  summary,book,cfg=self.summary_fixture();template=summary.ROOT/'assets/report-headers.xlsx'
+  with tempfile.TemporaryDirectory() as directory:
+   source=pathlib.Path(directory)/'source.xlsx';candidate=pathlib.Path(directory)/'candidate.xlsx'
+   candidate.write_bytes(template.read_bytes())
+   with zipfile.ZipFile(template) as z:parts={n:z.read(n) for n in z.namelist()}
+   from xml.dom import minidom
+   styles=minidom.parseString(parts['xl/styles.xml']);uri=summary.NS['s']
+   formats=styles.getElementsByTagNameNS(uri,'numFmts')[0]
+   fmt=styles.createElementNS(uri,'numFmt');fmt.setAttribute('numFmtId','999');fmt.setAttribute('formatCode','0.00000')
+   formats.appendChild(fmt);formats.setAttribute('count',str(len(formats.getElementsByTagNameNS(uri,'numFmt'))))
+   xfs=styles.getElementsByTagNameNS(uri,'cellXfs')[0];nodes=xfs.getElementsByTagNameNS(uri,'xf');index=len(nodes)
+   xf=nodes[0].cloneNode(True);xf.setAttribute('numFmtId','999');xfs.appendChild(xf);xfs.setAttribute('count',str(index+1))
+   part=book['内业处理表']['part'];sheet=minidom.parseString(parts[part])
+   sheet.getElementsByTagNameNS(uri,'col')[0].setAttribute('style',str(index))
+   parts[part]=sheet.toxml(encoding='utf-8');parts['xl/styles.xml']=styles.toxml(encoding='utf-8')
+   with zipfile.ZipFile(source,'w') as z:
+    for name,data in parts.items():z.writestr(name,data)
+   with zipfile.ZipFile(candidate) as z:damaged={n:z.read(n) for n in z.namelist()}
+   cell_sheet=minidom.parseString(damaged[part])
+   for cell in cell_sheet.getElementsByTagNameNS(uri,'c'):
+    if cell.getAttribute('r')=='A1':cell.setAttribute('s','0')
+   damaged[part]=cell_sheet.toxml(encoding='utf-8')
+   with zipfile.ZipFile(candidate,'w') as z:
+    for name,data in damaged.items():z.writestr(name,data)
+   summary.restore_retained_styles(source,candidate)
+   summary.verify_preserved(summary.read_book(source),summary.read_book(candidate),summary.INPUT_NAMES)
+ def test_summary_removes_report_print_metadata_only(self):
+  summary,book,cfg=self.summary_fixture()
+  template=summary.ROOT/'assets/report-headers.xlsx'
+  with tempfile.TemporaryDirectory() as directory:
+   candidate=pathlib.Path(directory)/'candidate.xlsx';candidate.write_bytes(template.read_bytes())
+   before=summary.read_book(candidate)
+   summary.clear_report_print_metadata(candidate,summary.REPORT_NAMES)
+   after=summary.read_book(candidate)
+   summary.verify_preserved(before,after,summary.INPUT_NAMES)
+   for name in summary.REPORT_NAMES:
+    sh=after[name]
+    for tag in ('pageSetup','pageMargins','printOptions','headerFooter','rowBreaks','colBreaks'):
+     self.assertIsNone(sh['xml'].find('s:'+tag,summary.NS))
+    self.assertIsNone(sh['xml'].find('s:sheetPr/s:pageSetUpPr',summary.NS))
+    self.assertNotIn('_xlnm.Print_Area',sh['names']);self.assertNotIn('_xlnm.Print_Titles',sh['names'])
+ def test_summary_repairs_full_report_fonts_including_color(self):
+  summary,book,cfg=self.summary_fixture()
+  template=summary.ROOT/'assets/report-headers.xlsx'
+  payload=summary.build(summary.prepare(book,cfg),cfg)
+  with tempfile.TemporaryDirectory() as directory:
+   candidate=pathlib.Path(directory)/'candidate.xlsx'
+   with zipfile.ZipFile(template) as z:parts={n:z.read(n) for n in z.namelist()}
+   from xml.dom import minidom
+   styles=minidom.parseString(parts['xl/styles.xml'])
+   for color in styles.getElementsByTagNameNS(summary.NS['s'],'color'):
+    if color.parentNode.localName=='font':
+     for key in list(color.attributes.keys()):color.removeAttribute(key)
+     color.setAttribute('rgb','FFFFFFFF')
+   parts['xl/styles.xml']=styles.toxml(encoding='utf-8')
+   with zipfile.ZipFile(candidate,'w') as z:
+    for name,data in parts.items():z.writestr(name,data)
+   before=summary.read_book(candidate)
+   # Template-sized fixture; all roles, including B.5, must retain input styles.
+   payload=[{'name':n,'cols':15 if n=='B.5' else 1,'head':2,'last':2} for n in summary.REPORT_NAMES]
+   self.assertGreater(summary.restore_style_components(template,candidate,'font',payload),0)
+   after=summary.read_book(candidate);summary.verify_preserved(before,after,summary.INPUT_NAMES)
+   for name in summary.REPORT_NAMES:
+    a=after[name];b=book[name]
+    def font(sh):
+     xf=sh['styles'].find('s:cellXfs',summary.NS)[sh['cells']['A1']['style']]
+     return E.tostring(sh['styles'].find('s:fonts',summary.NS)[int(xf.attrib.get('fontId',0))])
+    self.assertEqual(font(a),font(b))
+   self.assertEqual(summary.restore_style_components(template,candidate,'font',payload),0)
  def test_summary_preservation_rejects_print_setting_drift(self):
   from copy import deepcopy
   summary,book,cfg=self.summary_fixture()

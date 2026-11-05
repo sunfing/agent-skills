@@ -1,4 +1,4 @@
-"""Stage and publish forestry report tables using native Excel; Python stdlib only."""
+"""Update the supplied workbook with linked forestry reports using native Excel."""
 import argparse
 from copy import deepcopy
 from decimal import Decimal
@@ -550,16 +550,12 @@ def template_fonts(payload, template):
 
 
 def report_layout(payload, template):
-    """Keep template headings/page boundaries as data, and validate emitted formats."""
+    """Keep template headings and report dimensions; reports are ordinary worksheets."""
     template_fonts(payload,template)
     for s in payload:
         ref=template[s['name']]
         s['cells']['A1']=val(ref,'A1')
         if s['name']=='现状调查表':s['cells']['A16']=val(ref,'A16')
-        s['manual_breaks']=[int(n.attrib['id']) for n in ref['xml'].findall('s:rowBreaks/s:brk',NS)
-                            if n.attrib.get('man')=='1' and int(n.attrib['id'])<s['last']]
-        s['print_titles']=ref.get('names',{}).get('_xlnm.Print_Titles')
-        s['print_area']=f"'{s['name']}'!$A$1:${col(s['cols'])}${s['last']}"
         s.setdefault('display_checks',{})
 
 
@@ -578,6 +574,12 @@ def report_source_address(spec, address):
     row=spec.get('style_rows',{}).get(str(row),row if row<=spec['head'] else 9 if spec['name']=='A.1' else spec['head']+1)
     if spec['name']=='B.5' and column not in ('A','B','C'):column='D'
     return f'{column}{row}'
+
+
+def font_anchor(sheet, address):
+    for node in sheet['xml'].findall('s:mergeCells/s:mergeCell',NS):
+        if address in addresses(node.attrib['ref']):return node.attrib['ref'].split(':')[0]
+    return address
 
 
 def restore_style_components(source, candidate, component="font", report_payload=None):
@@ -609,7 +611,7 @@ def restore_style_components(source, candidate, component="font", report_payload
             column = column * 26 + ord(char) - 64
         return column, int(address[len(letters):])
 
-    targets={s['name']:s for s in report_payload if component=='fill' or s['name']!='B.5'} if report_payload is not None else dict.fromkeys(INPUT_NAMES)
+    targets={s['name']:s for s in report_payload if component!='border' or s['name']!='B.5'} if report_payload is not None else dict.fromkeys(INPUT_NAMES)
     for name in targets:
         if name not in before:
             continue
@@ -624,10 +626,12 @@ def restore_style_components(source, candidate, component="font", report_payload
         cells = {c.getAttribute('r'): c for c in document.getElementsByTagNameNS(uri, 'c')}
         sheet_changed = False
         source_cells=old['cells']
-        if report_payload is not None and component=='fill':
+        if report_payload is not None and component in ('fill','font'):
             spec=targets[name];bottom=spec['last'];source_cells={}
             for address in addresses(f'A1:{col(right)}{bottom}'):
-                source_cells[address]=old['cells'].get(report_source_address(spec,address),{'style':0})
+                source_address=report_source_address(spec,address)
+                if component=='font':source_address=font_anchor(old,source_address)
+                source_cells[address]=old['cells'].get(source_address,{'style':0})
         for address, cell in source_cells.items():
             column, row = point(address)
             if column > right or row > bottom:
@@ -678,6 +682,97 @@ def restore_style_components(source, candidate, component="font", report_payload
 
 def restore_input_title_fonts(source, candidate):
     return restore_style_components(source,candidate)
+
+
+def restore_retained_styles(source, candidate):
+    """Preserve retained cell styles and column defaults across Excel SaveAs."""
+    before,after=read_book(source),read_book(candidate)
+    reference=next(iter(after.values()))
+    style_ids={style_signature(reference,i):i for i in range(len(reference['styles'].find('s:cellXfs',NS)))}
+    with zipfile.ZipFile(candidate) as archive:
+        entries=archive.infolist();parts={e.filename:archive.read(e) for e in entries}
+    styles=minidom.parseString(parts['xl/styles.xml'])
+    xfs=styles.getElementsByTagNameNS(NS['s'],'cellXfs')[0]
+    def import_style(old,index):
+        source_xf=old['styles'].find('s:cellXfs',NS)[index]
+        xf=styles.importNode(minidom.parseString(ET.tostring(source_xf)).documentElement,True)
+        xf.setAttribute('xfId','0')
+        for component in ('font','fill','border'):
+            table=styles.getElementsByTagNameNS(NS['s'],component+'s')[0]
+            element=old['styles'].find('s:'+component+'s',NS)[int(source_xf.attrib.get(component+'Id',0))]
+            index=len(table.getElementsByTagNameNS(NS['s'],component))
+            table.appendChild(styles.importNode(minidom.parseString(ET.tostring(element)).documentElement,True))
+            table.setAttribute('count',str(index+1));xf.setAttribute(component+'Id',str(index))
+        number=int(source_xf.attrib.get('numFmtId',0))
+        if number>=164:
+            tables=styles.getElementsByTagNameNS(NS['s'],'numFmts')
+            if not tables:
+                table=styles.createElementNS(NS['s'],'numFmts');styles.documentElement.insertBefore(table,styles.documentElement.firstChild)
+            else:table=tables[0]
+            nodes=table.getElementsByTagNameNS(NS['s'],'numFmt');number=max([163]+[int(n.getAttribute('numFmtId')) for n in nodes])+1
+            element=styles.createElementNS(NS['s'],'numFmt');element.setAttribute('numFmtId',str(number))
+            element.setAttribute('formatCode',number_format(old,old['styles'].find('s:cellXfs',NS)[:].index(source_xf)))
+            table.appendChild(element);table.setAttribute('count',str(len(nodes)+1));xf.setAttribute('numFmtId',str(number))
+        index=len(xfs.getElementsByTagNameNS(NS['s'],'xf'));xfs.appendChild(xf);xfs.setAttribute('count',str(index+1))
+        return index
+    for name,old in before.items():
+        if name in REPLACED_NAMES:continue
+        with zipfile.ZipFile(source) as archive:original=minidom.parseString(archive.read(old['part']))
+        old_cols=original.getElementsByTagNameNS(NS['s'],'cols')
+        doc=minidom.parseString(parts[after[name]['part']])
+        def mapped_style(index):
+            signature=style_signature(old,index)
+            if signature not in style_ids:style_ids[signature]=import_style(old,index)
+            return style_ids[signature]
+        if old_cols:
+            current=doc.getElementsByTagNameNS(NS['s'],'cols')
+            if not current:raise ValueError(f'Missing preserved column definitions: {name}')
+            columns=doc.importNode(old_cols[0],True)
+            for column in columns.getElementsByTagNameNS(NS['s'],'col'):
+                if column.hasAttribute('style'):column.setAttribute('style',str(mapped_style(int(column.getAttribute('style')))))
+            current[0].parentNode.replaceChild(columns,current[0])
+        cells={c.getAttribute('r'):c for c in doc.getElementsByTagNameNS(NS['s'],'c')}
+        for address,cell in old['cells'].items():
+            if address not in cells:raise ValueError(f'Missing preserved cell: {name}!{address}')
+            cells[address].setAttribute('s',str(mapped_style(cell['style'])))
+        parts[after[name]['part']]=doc.toxml(encoding='utf-8')
+    parts['xl/styles.xml']=styles.toxml(encoding='utf-8')
+    temporary=Path(candidate).with_suffix('.tmp')
+    with zipfile.ZipFile(temporary,'w') as archive:
+        for entry in entries:archive.writestr(entry,parts[entry.filename])
+    os.replace(temporary,candidate)
+
+
+def clear_report_print_metadata(path, report_names):
+    """Remove print areas, page setup, margins, and breaks from generated reports only."""
+    path=Path(path)
+    with zipfile.ZipFile(path) as archive:
+        entries=archive.infolist();parts={e.filename:archive.read(e) for e in entries}
+    workbook=minidom.parseString(parts['xl/workbook.xml'])
+    rels=ET.fromstring(parts['xl/_rels/workbook.xml.rels'])
+    relmap={r.attrib['Id']:r.attrib['Target'] for r in rels}
+    sheet_parts={}
+    sheets=workbook.getElementsByTagNameNS(NS['s'],'sheet')
+    for index,sheet in enumerate(sheets):
+        if sheet.getAttribute('name') not in report_names:continue
+        rid=sheet.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','id')
+        target=relmap[rid].lstrip('/') if relmap[rid].startswith('/') else posixpath.normpath('xl/'+relmap[rid])
+        sheet_parts[target]=index
+    for part in sheet_parts:
+        doc=minidom.parseString(parts[part])
+        for node in list(doc.getElementsByTagNameNS(NS['s'],'pageMargins'))+list(doc.getElementsByTagNameNS(NS['s'],'pageSetup'))+list(doc.getElementsByTagNameNS(NS['s'],'printOptions'))+list(doc.getElementsByTagNameNS(NS['s'],'rowBreaks'))+list(doc.getElementsByTagNameNS(NS['s'],'colBreaks'))+list(doc.getElementsByTagNameNS(NS['s'],'headerFooter')):
+            node.parentNode.removeChild(node)
+        for node in list(doc.getElementsByTagNameNS(NS['s'],'pageSetUpPr')):
+            node.parentNode.removeChild(node)
+        parts[part]=doc.toxml(encoding='utf-8')
+    for node in list(workbook.getElementsByTagNameNS(NS['s'],'definedName')):
+        if node.getAttribute('name') in ('_xlnm.Print_Area','_xlnm.Print_Titles') and int(node.getAttribute('localSheetId') or -1) in sheet_parts.values():
+            node.parentNode.removeChild(node)
+    parts['xl/workbook.xml']=workbook.toxml(encoding='utf-8')
+    temporary=path.with_suffix(path.suffix+'.tmp')
+    with zipfile.ZipFile(temporary,'w') as archive:
+        for entry in entries:archive.writestr(entry,parts[entry.filename])
+    os.replace(temporary,path)
 
 
 def verify_report_borders(sheet, reference, cols, head):
@@ -740,18 +835,22 @@ def validate_candidate(source, candidate, payload):
             source_fill=ref['styles'].find('s:fills',NS)[int(source_xf.attrib.get('fillId',0))]
             if ET.tostring(fill)!=ET.tostring(source_fill):
                 raise ValueError(f'Unexpected report fill: {s["name"]}!{addr}')
+            font_cell=ref['cells'].get(font_anchor(ref,report_source_address(s,addr)),{'style':0})
+            font_xf=ref['styles'].find('s:cellXfs',NS)[font_cell['style']]
+            source_font=ref['styles'].find('s:fonts',NS)[int(font_xf.attrib.get('fontId',0))]
+            font=sh['styles'].find('s:fonts',NS)[int(xf.attrib.get('fontId',0))]
+            if ET.tostring(font)!=ET.tostring(source_font):
+                raise ValueError(f'Unexpected report font: {s["name"]}!{addr}')
         formats={addr:fmt for area,fmt in s['formats'] for addr in addresses(area)}
         for addr,fmt in formats.items():
             # Excel adds optional escaping when serializing custom number formats.
             actual=number_format(sh,sh['cells'].get(addr,{}).get('style',0))
             if actual.replace('\\','')!=fmt.replace('\\',''):
                 raise ValueError(f'Number format mismatch: {s["name"]}!{addr}: {actual} != {fmt}')
-        breaks={int(n.attrib['id']) for n in sh['xml'].findall('s:rowBreaks/s:brk',NS) if n.attrib.get('man')=='1'}
-        if not set(s.get('manual_breaks',[]))<=breaks:raise ValueError(f'Missing manual page break: {s["name"]}')
-        if 'print_titles' in s and sh.get('names',{}).get('_xlnm.Print_Titles')!=s['print_titles']:
-            raise ValueError(f'Print titles changed: {s["name"]}')
-        if 'print_area' in s and sh.get('names',{}).get('_xlnm.Print_Area','').replace("'",'')!=s['print_area'].replace("'",''):
-            raise ValueError(f'Print area changed: {s["name"]}')
+        for tag in ('pageMargins','pageSetup','printOptions','rowBreaks','colBreaks','headerFooter'):
+            if sh['xml'].find('s:'+tag,NS) is not None:raise ValueError(f'Report print metadata remains: {s["name"]}/{tag}')
+        if any(name in sh.get('names',{}) for name in ('_xlnm.Print_Area','_xlnm.Print_Titles')):
+            raise ValueError(f'Report defined print name remains: {s["name"]}')
         if s['name']=='B.5':
             for addr in addresses(f'D4:{col(s["cols"])}{s["last"]}'):
                 # Merged followers inherit their anchor; inspect stored anchors only.
@@ -811,38 +910,35 @@ def run_excel(job_path, validate_only=False, timeout=600):
 def main():
     ap=argparse.ArgumentParser(description=__doc__)
     ap.add_argument('input',type=Path,nargs='?');ap.add_argument('--config',type=Path)
-    ap.add_argument('--output',type=Path);ap.add_argument('--replace-sheets',action='store_true')
-    ap.add_argument('--stage-dir',type=Path);ap.add_argument('--publish-stage',type=Path)
+    ap.add_argument('--replace-sheets',action='store_true',help='Compatibility flag; report sheets are always rebuilt')
     args=ap.parse_args()
-    if args.publish_stage:publish(args.publish_stage.resolve(strict=True));return
     if os.name!='nt':ap.error('Windows and desktop Excel are required')
     if not args.input or not args.config:ap.error('input and --config required')
-    source=args.input.resolve(strict=True);output=(args.output or source).resolve()
-    if source.suffix.lower()!='.xlsx' or output.suffix.lower()!='.xlsx':ap.error('Only .xlsx workbooks are supported')
-    if output!=source and output.exists():ap.error('Separate output already exists')
+    source=args.input.resolve(strict=True);output=source
+    if source.suffix.lower()!='.xlsx':ap.error('Only .xlsx workbooks are supported')
     original=digest(source);book=read_book(source)
     if '内业处理表' not in book:ap.error('内业处理表 worksheet missing; finalize it manually before report generation')
-    if REPLACED_NAMES.intersection(book) and not args.replace_sheets:ap.error('Existing legacy or B-series report sheets require --replace-sheets after user authorization')
     cfg=json.loads(args.config.read_text(encoding='utf-8-sig'))
     records=prepare(book,cfg);payload=build(records,cfg)
     report_layout(payload,read_book(ROOT/'assets/report-headers.xlsx'))
-    stage=args.stage_dir.resolve() if args.stage_dir else Path(tempfile.mkdtemp(prefix='forestry-summary-'))
-    if args.stage_dir:stage.mkdir(exist_ok=False,parents=True)
+    stage=Path(tempfile.mkdtemp(prefix='forestry-summary-'))
     candidate=stage/'candidate.xlsx'
     job={'source':str(source),'template':str(ROOT/'assets/report-headers.xlsx'),'candidate':str(candidate),'stage':str(stage),'sheets':payload,'replace_names':sorted(REPLACED_NAMES),'input_names':[n for n in INPUT_NAMES if n in book]}
     job_path=stage/'job.json';job_path.write_text(json.dumps(job,ensure_ascii=False),encoding='utf-8-sig')
     run_excel(job_path)
-    restore_input_title_fonts(source,candidate)
+    restore_style_components(ROOT/'assets/report-headers.xlsx',candidate,'font',payload)
     restore_style_components(ROOT/'assets/report-headers.xlsx',candidate,'border',payload)
     restore_style_components(ROOT/'assets/report-headers.xlsx',candidate,'fill',payload)
+    restore_retained_styles(source,candidate)
+    clear_report_print_metadata(candidate,REPORT_NAMES)
     validate_candidate(source,candidate,payload)
     run_excel(job_path,validate_only=True)
-    validate_candidate(source,candidate,payload)
     if digest(source)!=original:raise ValueError('Source changed during generation')
     m={'source':str(source),'output':str(output),'source_hash':original,'candidate_hash':digest(candidate),'records':len(records),'area_ha':expected(records,'area'),'volume_m3':expected(records,'volume')}
     manifest=stage/'stage.json';manifest.write_text(json.dumps(m,ensure_ascii=False,indent=2),encoding='utf-8')
     blanks=[h for idx,h in [(33,'建设内容'),(34,'工程类别')] if any(r['values'][idx] in (None,'') for r in records)]
-    print(json.dumps({**m,'stage_manifest':str(manifest),'review_pdfs':[str(stage/f'{name}.pdf') for name in REPORT_NAMES],'blank_fields':blanks,'next':'Review all print PDFs, then --publish-stage'},ensure_ascii=False))
+    publish(manifest)
+    print(json.dumps({'updated':str(source),'records':len(records),'area_ha':m['area_ha'],'volume_m3':m['volume_m3'],'blank_fields':blanks},ensure_ascii=False))
 
 
 if __name__=='__main__':main()

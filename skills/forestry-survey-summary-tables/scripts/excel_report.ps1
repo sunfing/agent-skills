@@ -52,7 +52,7 @@ try {
   $s=$b.Worksheets.Item($name)
   if($s.Range('A1').Value2 -ne $null){
    $font=$s.Range('A1').Font
-   $fontChecks+=@{sheet=$name;address='A1';name=$font.Name;size=$font.Size;bold=$font.Bold;italic=$font.Italic}
+   $fontChecks+=@{sheet=$name;address='A1';name=$font.Name;size=$font.Size;bold=$font.Bold;italic=$font.Italic;color=$font.Color}
   }
  }
  foreach($d in $j.sheets){
@@ -60,7 +60,7 @@ try {
   $addresses=if($d.name -eq '现状调查表'){@('A1','A16','D3','D7')}else{@('A1')}
   foreach($address in $addresses){
    $font=$ref.Range($address).Font
-   $fontChecks+=@{sheet=$d.name;address=$address;name=$font.Name;size=$font.Size;bold=$font.Bold;italic=$font.Italic}
+   $fontChecks+=@{sheet=$d.name;address=$address;name=$font.Name;size=$font.Size;bold=$font.Bold;italic=$font.Italic;color=$font.Color}
   }
  }
  if(-not $ValidateOnly){
@@ -109,11 +109,9 @@ try {
    $table.Borders.LineStyle=1;$table.Borders.Weight=2
   }
   $all=$s.Range($s.Cells.Item(1,1),$s.Cells.Item($last,$nc))
-  foreach($prop in @('PaperSize','Orientation','Zoom','FitToPagesWide','FitToPagesTall','LeftMargin','RightMargin','TopMargin','BottomMargin','HeaderMargin','FooterMargin','CenterHorizontally','CenterVertically','PrintTitleRows','PrintTitleColumns','LeftHeader','CenterHeader','RightHeader','LeftFooter','CenterFooter','RightFooter')){$s.PageSetup.$prop=$ref.PageSetup.$prop}
-  $s.PageSetup.PrintArea=$all.Address()
-  if($d.name -eq 'B.5' -and $nc -gt 15){$s.PageSetup.Zoom=$false;$s.PageSetup.FitToPagesWide=1;$s.PageSetup.FitToPagesTall=$false}
-  foreach($boundary in $d.manual_breaks){[void]$s.HPageBreaks.Add($s.Cells.Item(([int]$boundary+1),1))}
-  $b.Activate();$s.Activate();$e.ActiveWindow.View=2;$e.ActiveWindow.Zoom=100
+  $s.DisplayPageBreaks=$false
+  $b.Activate();$s.Activate();$e.ActiveWindow.View=1
+
  }
  $order=@($j.input_names)+@($j.sheets | ForEach-Object {$_.name})
  for($i=$order.Count-1;$i -ge 0;$i--){$s=$b.Worksheets.Item($order[$i]);if($s.Index -ne 1){$s.Move($b.Worksheets.Item(1))}}
@@ -123,87 +121,6 @@ try {
   $s=$b.Worksheets.Item($d.name)
   foreach($f in $d.font_formats){$font=$s.Range($f[0]).Font;$font.Name=$f[1];$font.Size=[double]$f[2];$font.Bold=[bool]$f[3];$font.Italic=[bool]$f[4]}
  }
- $e.Calculation=-4105;$e.CalculateFullRebuild()
- $e.Calculation=-4135
- # Measure wrapped text using its actual font and width, without shrinking fonts.
- $measure=$b.Worksheets.Add()
- $widthCache=@{};$heightCache=@{}
- function Get-TextHeight($cell,$area,$value){
-   $widthKey=$area.Width.ToString('F2');$font=$cell.Font
-   if($font.Name -is [DBNull] -or $font.Size -is [DBNull] -or $font.Bold -is [DBNull] -or $font.Italic -is [DBNull]){
-    # Mixed rich text has no single Range.Font. Measure with the largest run.
-    $font=$cell.Characters(1,1).Font
-    for($charIndex=2;$charIndex -le $value.Length;$charIndex++){
-     $runFont=$cell.Characters($charIndex,1).Font
-     if($runFont.Size -gt $font.Size -or ($runFont.Size -eq $font.Size -and $runFont.Bold)){$font=$runFont}
-    }
-   }
-   $key="$widthKey|$($font.Name)|$($font.Size)|$($font.Bold)|$($font.Italic)|$value"
-   if(-not $heightCache.ContainsKey($key)){
-    $probe=$measure.Range('A1');$probe.Value2=$value;$probe.WrapText=$true
-    foreach($prop in @('Name','Size','Bold','Italic')){$probe.Font.$prop=$font.$prop}
-    if(-not $widthCache.ContainsKey($widthKey)){
-     $lo=0.1;$hi=255.0
-     for($i=0;$i -lt 12;$i++){
-      $mid=($lo+$hi)/2;$probe.ColumnWidth=$mid
-      if($probe.Width -gt $area.Width){$hi=$mid}else{$lo=$mid}
-     }
-     $widthCache[$widthKey]=$lo
-    }
-    $probe.ColumnWidth=$widthCache[$widthKey];[void]$probe.EntireRow.AutoFit()
-    if($probe.RowHeight -ge 409){throw "Text exceeds a printable row: $($d.name)!$($cell.Address())"}
-    $heightCache[$key]=$probe.RowHeight+2
-   }
-  return $heightCache[$key]
- }
- foreach($d in $j.sheets){
-  $s=$b.Worksheets.Item($d.name)
-  $range=$s.Range($s.Cells.Item(1,1),$s.Cells.Item([int]$d.last,[int]$d.cols));$values=$range.Value2
-  for($r=1;$r -le [int]$d.last;$r++){for($c=1;$c -le [int]$d.cols;$c++){
-   $value=$values[$r,$c]
-   if($value -isnot [string] -or $value.Length -eq 0){continue}
-   $cell=$s.Cells.Item($r,$c);$area=$cell.MergeArea
-   if($area.Rows.Count -gt 1 -and $r -gt [int]$d.head){continue}
-   if(-not $cell.WrapText){continue}
-   $required=Get-TextHeight $cell $area $value
-   $cell.ShrinkToFit=$false;$extra=$required-$area.Height
-   if($extra -gt 0){$row=$s.Rows.Item($area.Row+$area.Rows.Count-1);$row.RowHeight=$row.RowHeight+$extra}
-  }}
-  # Repeat labels across pages and ensure even a short final segment fits.
-  $s.DisplayPageBreaks=$true;$labels=@()
-  foreach($merged in $d.merges){
-   $area=$s.Range($merged)
-   if($area.Rows.Count -gt 1 -and $area.Row -gt [int]$d.head){$labels+=@{address=$merged;value=$area.Cells.Item(1,1).Value2}}
-  }
-  for($layoutPass=0;$layoutPass -lt 4;$layoutPass++){
-   foreach($label in $labels){
-    $area=$s.Range($label.address);[void]$area.UnMerge();[void]$area.ClearContents();[void]$area.Merge();$area.Cells.Item(1,1).Value2=$label.value
-   }
-   $boundaries=@($s.HPageBreaks | ForEach-Object {$_.Location.Row});$grew=$false
-   foreach($label in $labels){
-    $area=$s.Range($label.address);$start=$area.Row;$end=$start+$area.Rows.Count-1
-    $cuts=@($boundaries | Where-Object {$_ -gt $start -and $_ -le $end} | Sort-Object -Unique)
-    $left=$area.Column;$right=$left+$area.Columns.Count-1;[void]$area.UnMerge();[void]$area.ClearContents()
-    foreach($stop in @($cuts)+@($end+1)){
-     $segment=$s.Range($s.Cells.Item($start,$left),$s.Cells.Item(($stop-1),$right))
-     [void]$segment.Merge();$cell=$segment.Cells.Item(1,1);$cell.Value2=$label.value
-     foreach($edge in @(7,8,9,10)){$segment.Borders.Item($edge).LineStyle=1;$segment.Borders.Item($edge).Weight=2}
-     if($label.value -is [string] -and $label.value.Length -gt 0){
-      $required=Get-TextHeight $cell $segment $label.value
-      if($required -gt $segment.Height){
-       $row=$s.Rows.Item(($stop-1));$newHeight=$row.RowHeight+$required-$segment.Height
-       if($newHeight -ge 409){throw "Page label exceeds printable row height: $($d.name)!$($label.address)"}
-       $row.RowHeight=$newHeight;$grew=$true
-      }
-     }
-     $start=$stop
-    }
-   }
-   if(-not $grew){break}
-   if($layoutPass -eq 3){throw "Page label layout did not converge: $($d.name)"}
-  }
- }
- $measure.Delete()
  $t.Close($false);$t=$null;$e.Calculation=-4105;$e.CalculateFullRebuild()
  $b.Worksheets.Item('内业处理表').Activate()
  $b.SaveAs($j.candidate,51);$b.Close($false);$b=$null
@@ -215,7 +132,7 @@ try {
  $b=$e.Workbooks.Open($j.candidate,0,$true)
  foreach($check in $fontChecks){
   $font=$b.Worksheets.Item($check.sheet).Range($check.address).Font
-  if($font.Name -ne $check.name -or $font.Size -ne $check.size -or $font.Bold -ne $check.bold -or $font.Italic -ne $check.italic){throw "Preserved font changed: $($check.sheet)!$($check.address)"}
+  if($font.Name -ne $check.name -or $font.Size -ne $check.size -or $font.Bold -ne $check.bold -or $font.Italic -ne $check.italic -or $font.Color -ne $check.color){throw "Preserved font changed: $($check.sheet)!$($check.address)"}
  }
  foreach($d in $j.sheets){
   $s=$b.Worksheets.Item($d.name)
@@ -239,20 +156,7 @@ try {
   foreach($p in $d.display_checks.PSObject.Properties){
    if($s.Range($p.Name).Text -ne [string]$p.Value){throw "Display mismatch: $($d.name)!$($p.Name)"}
   }
-  foreach($boundary in $d.manual_breaks){
-   if($s.Rows.Item(([int]$boundary+1)).PageBreak -ne -4135){throw "Manual page break missing: $($d.name)"}
-  }
-  $boundaries=@($s.HPageBreaks | ForEach-Object {$_.Location.Row})
-  foreach($merged in $d.merges){
-   $original=$s.Range($merged)
-   foreach($boundary in $boundaries){
-    if($boundary -le $original.Row -or $boundary -ge ($original.Row+$original.Rows.Count)){continue}
-    $segment=$s.Cells.Item($boundary,$original.Column).MergeArea
-    if($segment.Row -lt $boundary){throw "Merged label crosses a printed page: $($d.name)!$merged"}
-   }
-  }
  }
- foreach($d in $j.sheets){$b.Worksheets.Item($d.name).ExportAsFixedFormat(0,(Join-Path $j.stage "$($d.name).pdf"))}
  Write-Output 'Excel reopen, title fonts, formula and subtotal verification passed'
 }catch{
  Write-Output "Sheet: $($d.name); cell: $($p.Name)"

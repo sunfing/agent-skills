@@ -1,4 +1,4 @@
 interface:
   display_name: "Forestry Survey Summary Tables"
   short_description: "Build linked forestry reports from finalized internal data"
-  default_prompt: "使用 $forestry-survey-summary-tables 从内业处理表生成现状调查表、A.1及B.1—B.7联动报告，核对项目口径和打印版式。"
+  default_prompt: "使用 $forestry-survey-summary-tables 在用户指定工作簿内，以内业处理表为唯一数据源重建现状调查表、A.1及B.1—B.7，保留前三张输入表，取消报告打印设置，校验后原地更新。"
