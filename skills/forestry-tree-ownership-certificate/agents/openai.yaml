@@ -1,4 +1,4 @@
 interface:
-  display_name: "林木权属证明"
-  short_description: "按核定小班数据生成永久或临时林木权属证明，附对接首页与两栏签章区"
+  display_name: "Forestry Tree Ownership Certificate"
+  short_description: "Generate permanent or temporary tree ownership certificates"
   default_prompt: "使用 $forestry-tree-ownership-certificate 默认核对指定小班因子调查表的 A.1；缺表或字段不全时说明并停止。核对批准名称及权利人，检查全部页面后将永久或临时林木权属证明保存到对应项目报批目录，保留原件。"
