@@ -353,7 +353,7 @@ def build(records,cfg):
                         expr=f'IF({ref}&""={literal(key)},{literal(value)},{expr})'
                 if dc==16:
                     ref=f"'内业处理表'!{columns[17]}{sr}"
-                    expr=f'IF(OR({ref}="",{ref}="其他区域",{ref}="无"),"不涉及",{ref})'
+                    expr=f'IF(OR({ref}="",{ref}="其他区域",{ref}="不涉及",{ref}="无"),"",{ref})'
                 if dc==23:
                     ref=f"'内业处理表'!{columns[25]}{sr}"
                     expr=f'IF(I{rr}<>"乔木林地","",IF(AND(ISNUMBER({ref}),{ref}>=0),{ref},NA()))'
@@ -405,18 +405,21 @@ def build(records,cfg):
                             else:totals.put(s,f'{col(c)}{row}',metric,base+[(key,v)])
             s['formats'].append((f'G{start}:{col(nc)}{start+size-1}','0.0000;-0.0000;;@' if metric=='area' else '0.0;-0.0;;@'))
         s['last']=head+2*size;sheets.append(s)
-    classes=CLASSES[:5]+[c for c in CLASSES[5:] if any(r['land_class']==c for r in records)]
-    nc=3+2*(1+len(classes));s=make_sheet('B.5',6,nc)
-    merge(s,f'A1:{col(nc)}2',report_title(cfg,'分森林类别按现状地类面积统计表','B.5'))
-    merge(s,f'A3:{col(nc)}3','单位：公顷');merge(s,'A4:A5','县、林业局');merge(s,'B4:C5','森林类别')
-    s['cells']['A6']=1;merge(s,'B6:C6',2)
+    classes=CLASSES[:5]
+    unsupported=sorted({r['land_class'] for r in records if r['land_class'] not in classes})
+    if unsupported:
+        raise ValueError(f'B.5 current template has no columns for land classes: {unsupported}')
+    nc=15;s=make_sheet('B.5',5,nc)
+    merge(s,'A1:O1',report_title(cfg,'分森林类别按现状地类面积统计表','B.5'))
+    merge(s,'A2:O2','单位：公顷');merge(s,'A3:A4','县、林业局');merge(s,'B3:C4','森林类别')
+    s['cells']['A5']=1;merge(s,'B5:C5',2)
     for k,lc in enumerate(['合计']+classes):
-        c=4+k*2;merge(s,f'{col(c)}4:{col(c+1)}4',lc)
-        for j,o in enumerate(owners[1:]):s['cells'][f'{col(c+j)}5']=o;s['cells'][f'{col(c+j)}6']=c+j-1
+        c=4+k*2;merge(s,f'{col(c)}3:{col(c+1)}3',lc)
+        for j,o in enumerate(owners[1:]):s['cells'][f'{col(c+j)}4']=o;s['cells'][f'{col(c+j)}5']=c+j-1
     counties=list(dict.fromkeys(r['admin'][:2] for r in records))
     leaves=[FORESTS[:5],FORESTS[:3],FORESTS[3:4],FORESTS[4:5],FORESTS[5:],FORESTS[5:6],FORESTS[6:]]
     for i,g in enumerate([()]+counties):
-        start=7+7*i;name='合计' if not g else ''.join(g) if sum(c[1]==g[1] for c in counties)>1 else g[1]
+        start=6+7*i;name='合计' if not g else ''.join(g) if sum(c[1]==g[1] for c in counties)>1 else g[1]
         merge(s,f'A{start}:A{start+6}',name);merge(s,f'B{start}:B{start+3}','公益林地');merge(s,f'B{start+4}:B{start+6}','商品林地')
         for j,label in enumerate(['小计','国家级公益林地','省级公益林地','市县级公益林地','小计','重点商品林地','一般商品林地']):
             row=start+j;s['cells'][f'C{row}']=label
@@ -424,10 +427,11 @@ def build(records,cfg):
                 for h,o in enumerate(owners[1:]):
                     base=base_criteria(g,o)+([('I',lc)] if lc else [])
                     totals.union(s,f'{col(4+k*2+h)}{row}','area',base,'L',[k for k,v in cfg['forest_map'].items() if v in leaves[j]])
-    s['last']=6+7*(1+len(counties));s['formats']=[(f'A6:{col(nc)}6','0'),(f'D7:{col(nc)}{s["last"]}','0.0000;-0.0000;;@')];sheets.append(s)
+    s['last']=5+7*(1+len(counties));s['formats']=[(f'A5:{col(nc)}5','0'),(f'D6:{col(nc)}{s["last"]}','0.0000;-0.0000;;@')];sheets.append(s)
     s=make_sheet('B.6',5,11);s['cells']['A1']=report_title(cfg,'重点生态区域林地面积统计表','B.6')
     if cfg['ecology']['mode']=='none':
-        s['cells']['A6']='=IF(COUNTIF(\'A.1\'!P4:P'+str(detail['last'])+',"不涉及")=COUNTA(\'内业处理表\'!'+columns[6]+'4:'+columns[6]+str(max(r['source'] for r in records))+'),"不涉及","需核查生态区域")';s['last']=6
+        source_range=f"'内业处理表'!{columns[17]}4:{columns[17]}{max(r['source'] for r in records)}"
+        s['cells']['A6']=f'=IF(COUNTIFS({source_range},"<>",{source_range},"<>其他区域",{source_range},"<>不涉及",{source_range},"<>无")=0,"不涉及","需核查生态区域")';s['last']=6
     else:
         for row,reg in enumerate(cfg['ecology']['records'],6):
             s['cells'][f'A{row}']=reg['name'];totals.union(s,f'B{row}','area',[],'G',reg['parcel_ids'])
@@ -439,6 +443,12 @@ def build(records,cfg):
     sheets.append(build_fee(records,cfg,gs,totals))
     status=make_sheet('现状调查表',38,19);status['last']=38;status['preserve_body']=True
     status['cells'].update(cfg['status_fields']);status['cells'].update({'A1':report_title(cfg,'现状调查表'),'D3':cfg['project_name'],'A16':report_title(cfg,'现状调查表（续）')})
+    # The continuation form keeps only its seven question titles. All response
+    # bodies are intentionally blank for later manual completion.
+    status['cells'].update({
+        'A25':'','A27':'','A29':'','A31':'','A33':'','A35':'',
+        'A37':'编制单位意见（单位印章）：',
+    })
     for metric,start in [('area',8),('volume',11)]:
         for j,o in enumerate(owners):
             row=start+j;base=base_criteria((),o);totals.put(status,f'D{row}',metric,base)
@@ -470,7 +480,7 @@ def build_fee(records,cfg,gs,totals):
     s['cells']['A3']='单位：面积—公顷；基础单价—元/平方米；金额—万元'
     s['cells']['A1']=report_title(cfg,'森林植被恢复费'+('参考测算表' if fee['mode']=='reference' else '测算表'),'B.7')
     if fee['mode']=='not_applicable':
-        merge(s,'A8:M9','不适用：'+fee['basis']);s['last']=9;return s
+        raise ValueError('fee.mode must be reference or charge; both project natures require vegetation restoration measurement')
     s['cells'].update({'H3':'乔木林地等（10元类）','K3':'灌木林地等（6元类）','I7':10,'L7':6})
     # Global project conditions are explicit; forest status remains a live predicate.
     factor=2 if fee['urban_planning_area'] or fee['project_kind']=='经营性' else 1
@@ -498,12 +508,10 @@ def build_fee(records,cfg,gs,totals):
                 amount+=r['area']*rate*factor*(2 if r['forest_category'] in doubled else 1)
             if supported:s['checks'][f'G{row}']=amount
     s['table_last']=6+len(gs)*3;s['last']=s['table_last']+4
-    note=HEBEI_BASIS+'。\n'+HEBEI_NOTE+'\n'+('规划区内' if fee['urban_planning_area'] else '规划区外')+'；'+fee['project_kind']+'。'
-    if fee['mode']=='reference':note+='本表仅为参考测算，不作为应缴金额。'
-    if cfg['use_nature']=='临时':note+='临时使用林地不再收取森林植被恢复费，实际恢复工程费用另计（国家林草局2023年第13号公告）。'
-    else:note+='永久使用林地仍需开展植被恢复测算，恢复地点按批准的异地恢复安排执行。'
     note_start=s['table_last']+1;note_end=note_start+3
-    merge(s,f'A{note_start}:M{note_end}',note);s['heights'][str(note_start)]=100
+    # Rows 22-25 are reserved for manual completion and must remain the
+    # template's blank merged area with its native 18-point row heights.
+    merge(s,f'A{note_start}:M{note_end}','')
     s['style_rows']={str(row):row for row in range(note_start,note_end+1)}
     s['formats']=[(f'F7:M{s["table_last"]}','0.0000;-0.0000;;@'),(f'I7:I{s["table_last"]}','0.00;-0.00;;@'),(f'L7:L{s["table_last"]}','0.00;-0.00;;@')]
     return s
@@ -902,6 +910,8 @@ def validate_candidate(source, candidate, payload):
                 # Native Excel already verifies every expanded formula on reopen.
                 # XML shared-formula followers intentionally omit formula text.
                 if not actual.get('shared_formula') and normalize_formula(actual.get('formula'))!=normalize_formula(v[1:]):raise ValueError(f'Formula was not preserved: {addr}')
+            elif v in (None,'') and actual.get('value') in (None,''):
+                continue
             elif actual.get('value') not in (v, '' if v is None else v):raise ValueError(f'Cell mismatch: {addr}')
         for addr,v in s['checks'].items():
             got=val(sh,addr)

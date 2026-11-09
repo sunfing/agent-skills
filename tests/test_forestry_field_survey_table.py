@@ -180,8 +180,39 @@ class SurveyTests(unittest.TestCase):
   summary,book,cfg=self.summary_fixture();cfg['use_nature']='永久';book['内业处理表']['cells']['AI4']['value']='永久'
   sheets=summary.build(summary.prepare(book,cfg),cfg);fee=next(s for s in sheets if s['name']=='B.7')
   self.assertFalse(any('临时使用林地' in str(value) for value in fee['cells'].values()))
-  self.assertTrue(any('异地恢复安排' in str(value) for value in fee['cells'].values()))
+  self.assertEqual(fee['cells']['A22'],'')
+  self.assertIn('A22:M25',fee['merges'])
   self.assertIn(str(fee['last']),fee['style_rows'])
+
+ def test_summary_manual_continuation_bodies_are_blank(self):
+  summary,book,cfg=self.summary_fixture()
+  sheets=summary.build(summary.prepare(book,cfg),cfg)
+  status=next(s for s in sheets if s['name']=='现状调查表')
+  for address in ['A25','A27','A29','A31','A33','A35']:
+   self.assertEqual(status['cells'][address],'')
+  self.assertEqual(status['cells']['A37'],'编制单位意见（单位印章）：')
+
+ def test_summary_ecology_none_is_blank_in_a1(self):
+  summary,book,cfg=self.summary_fixture()
+  sheets=summary.build(summary.prepare(book,cfg),cfg)
+  detail=next(s for s in sheets if s['name']=='A.1')
+  ecology=detail['cells']['P9']
+  self.assertIn('""',ecology)
+  self.assertNotIn('),"不涉及",',ecology)
+  b6=next(s for s in sheets if s['name']=='B.6')
+  self.assertIn('COUNTIFS',b6['cells']['A6'])
+
+ def test_summary_b5_matches_current_template_rows(self):
+  summary,book,cfg=self.summary_fixture()
+  sheets=summary.build(summary.prepare(book,cfg),cfg)
+  b5=next(s for s in sheets if s['name']=='B.5')
+  self.assertEqual((b5['head'],b5['cols'],b5['last']),(5,15,19))
+  self.assertIn('A1:O1',b5['merges'])
+  self.assertIn('A2:O2',b5['merges'])
+  self.assertIn('A3:A4',b5['merges'])
+  self.assertIn('A6:A12',b5['merges'])
+  self.assertIn('A13:A19',b5['merges'])
+  self.assertNotIn('A1:O2',b5['merges'])
  def test_summary_layout_uses_template_without_print_settings(self):
   summary,book,cfg=self.summary_fixture();sheets=summary.build(summary.prepare(book,cfg),cfg)
   book['现状调查表']['cells']['A1']['value']='已核定模板标题'
