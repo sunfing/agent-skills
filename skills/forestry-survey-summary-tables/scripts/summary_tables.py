@@ -39,7 +39,9 @@ def col(n):
 
 
 def normal(s):
-    return ''.join(str(s or '').split()).replace('（', '(').replace('）', ')').replace('²', '2').replace('³', '3')
+    # Only visual whitespace is ignored.  Field spelling, punctuation and units
+    # remain strict so an old or renamed column cannot be silently reused.
+    return re.sub(r'\s+', '', str(s or ''))
 
 
 def read_book(path):
@@ -90,12 +92,13 @@ def text(v):
     return str(v).strip() if v is not None else ''
 
 
-# Canonical internal-input schema; report formulas resolve actual column positions.
-INPUT_HEADERS = ['市','县','乡','村','林班号(村小组)','小班号林地落界','小班编号','面积hm2',
+# Canonical internal-input schema copied from the current supplied template.
+# Header spelling is strict; only line breaks and ordinary whitespace are ignored.
+INPUT_HEADERS = ['市','县','乡','村','林班号(村小组)','小班号林地落界','使用林地序号','面积hm2',
  '原始地类','现状地类','林地类型','林地权属','森林类别','公益林事权','林地保护等级','林种',
- '起源','重点生态区域','原优势树种','优势树种','龄组(产期)','林龄','平均树高m','平均胸径cm',
- '郁闭度(覆盖度)','每公顷蓄积m3','小班蓄积m3','经济(竹)林株数','坡向','坡位','坡度',
- '土壤类型','土层厚度','建设内容','工程类别','使用林地性质','备注']
+ '起源','重点生态区域','优势树种','龄组(产期)','林龄','平均树高m','平均胸径cm','郁闭度(覆盖度)',
+ '每公顷蓄积m3','小班蓄积m3','株数','坡向','坡位','坡度','土壤类型','土层厚度cm',
+ '建设内容','工程类别','使用林地性质','备注']
 HEBEI_BASIS = '财税〔2015〕122号、冀财税〔2016〕25号'
 HEBEI_NOTE = ('河北省参考标准：郁闭度0.2以上乔木林地（含采伐迹地、火烧迹地）、竹林地、苗圃地10元/平方米；'
  '灌木林地、疏林地、未成林造林地6元/平方米。国家级、省级公益林加倍；城市规划区内再加倍；'
@@ -103,12 +106,26 @@ HEBEI_NOTE = ('河北省参考标准：郁闭度0.2以上乔木林地（含采�
 
 
 def input_columns(sheet):
-    heads = {normal(c['value']): a.rstrip('0123456789') for a,c in sheet['cells'].items()
-             if a.endswith('3') and a.rstrip('0123456789')+'3' == a and c['value']}
-    missing = [h for h in INPUT_HEADERS if normal(h) not in heads]
-    if missing: raise ValueError(f'Unexpected 内业处理表 headers: {missing}')
-    # Header-driven mapping also accepts the current project's optional 旧编号.
-    return [heads[normal(h)] for h in INPUT_HEADERS]
+    row = []
+    for address, cell in sheet['cells'].items():
+        letters=address.rstrip('0123456789')
+        if address[len(letters):] != '3' or cell.get('value') in (None, ''):
+            continue
+        index=0
+        for char in letters:index=index*26+ord(char)-64
+        row.append((index,letters,str(cell['value'])))
+    row.sort(key=lambda item:item[0])
+    actual = [normal(value) for _, _, value in row]
+    expected_headers = [normal(value) for value in INPUT_HEADERS]
+    if actual != expected_headers:
+        missing = [h for h in INPUT_HEADERS if normal(h) not in actual]
+        extra = [v for v in actual if v not in expected_headers]
+        mismatch = next((i for i, pair in enumerate(zip(actual, expected_headers), 1) if pair[0] != pair[1]), None)
+        raise ValueError(
+            f'内业处理表 headers do not match the current template; '
+            f'first_mismatch_column={mismatch}, missing={missing}, extra={extra}'
+        )
+    return [letters for _, letters, _ in row]
 
 
 def forest_display(category, authority):
@@ -140,15 +157,15 @@ def prepare(book, cfg):
             raise ValueError(f'Unresolved classification: parcel {ident}: {lc}/{lt}/{fc}/{level}')
         if any(not text(x) for x in v[:4]) or v[11] not in ('国有','集体'):
             raise ValueError(f'Incomplete administration or unsupported ownership for the status-form template: {ident}')
-        if text(v[35]) not in ('',cfg['use_nature']):raise ValueError(f'Use nature conflict: {ident}')
+        if text(v[34]) not in ('',cfg['use_nature']):raise ValueError(f'Use nature conflict: {ident}')
         area=number(v[7],f'occupied area {ident}',True)
-        vol=number(v[26],f'approved tree stock {ident}') if lc=='乔木林地' else 0
-        for idx in (22,23,24,25,27):
+        vol=number(v[25],f'approved tree stock {ident}') if lc=='乔木林地' else 0
+        for idx in (21,22,23,24,25,26,29,31):
             if v[idx] not in (None,''):
                 number(v[idx],f'{INPUT_HEADERS[idx]} {ident}')
-        if v[24] not in (None,'') and v[24]>1:
+        if v[23] not in (None,'') and v[23]>1:
             raise ValueError(f'Canopy must be within 0..1, not a percentage: {ident}')
-        if v[27] not in (None,'') and int(v[27])!=v[27]:
+        if v[26] not in (None,'') and int(v[26])!=v[26]:
             raise ValueError(f'Tree count must be an integer: {ident}')
         records.append(dict(id=ident,source=rr,values=v,admin=tuple(map(text,v[:4])),own=v[11],land_class=lc,
                             land_type=lt,forest_category=fc,level=level,area=area,volume=vol))
@@ -172,16 +189,14 @@ def prepare(book, cfg):
             raise ValueError('Ecological configuration conflicts with 内业处理表: confirm involvement there first')
     else:raise ValueError('ecology mode must be confirmed')
     fee=cfg.get('fee',{})
-    if fee.get('mode')=='not_applicable':
-        if not text(fee.get('basis')):raise ValueError('Fee non-applicability basis required')
-    else:
-        if fee.get('mode') not in ('reference','charge'):raise ValueError('Fee mode required')
-        if cfg['use_nature']=='临时' and fee['mode']=='charge':raise ValueError('Temporary use is reference only')
-        if fee.get('region')!='河北省':raise ValueError('Fee template region mismatch: provide the new regional standard before use')
-        if not isinstance(fee.get('urban_planning_area'),bool) or fee.get('project_kind') not in ('公共基础设施','公共事业','国防','经营性'):
-            raise ValueError('Confirm urban_planning_area and project_kind')
-        for r in records:
-            if r['land_class']=='乔木林地':number(r['values'][24],f'canopy {r["id"]}')
+    if fee.get('mode') not in ('reference','charge'):
+        raise ValueError('Fee measurement is required for both permanent and temporary use; fee.mode must be reference or charge')
+    if cfg['use_nature']=='临时' and fee['mode']=='charge':raise ValueError('Temporary use is reference only')
+    if fee.get('region')!='河北省':raise ValueError('Fee template region mismatch: provide the new regional standard before use')
+    if not isinstance(fee.get('urban_planning_area'),bool) or fee.get('project_kind') not in ('公共基础设施','公共事业','国防','经营性'):
+        raise ValueError('Confirm urban_planning_area and project_kind')
+    for r in records:
+        if r['land_class']=='乔木林地':number(r['values'][23],f'canopy {r["id"]}')
     cfg.setdefault('status_fields',{})
     cfg['_identifier_formats']={}
     for r in records:
@@ -304,7 +319,7 @@ def report_title(cfg, label, table=None):
 
 def build(records,cfg):
     columns=cfg['_columns'];gs=groups(records)
-    detail=make_sheet('A.1',3,28);detail['last']=3+len(gs)+len(records)
+    detail=make_sheet('A.1',3,29);detail['last']=3+len(gs)+len(records)
     detail['cells']['A1']=report_title(cfg,'小班因子调查表','A.1')
     totals=Totals(records,detail['last']);rr=4
     # Administrative layout is rebuilt on regrouping; classifications stay live.
@@ -320,9 +335,11 @@ def build(records,cfg):
         if len(g)!=4:continue
         for r in items:
             r['detail']=rr;sr=r['source']
-            indices=[4,5,6,7,9,10,11,12,14,15,16,17,19,20,22,23,24,25,26,27,33,34,35,36]
+            # A.1 follows the current template: construction details remain in
+            # 内业处理表, while AB is the project-level planning-area flag.
+            indices=[4,5,6,7,9,10,11,12,14,15,16,17,18,19,21,22,23,24,25,26,27,28,29,None,35]
             for dc,idx in enumerate(indices,5):
-                expr=link(columns[idx],sr)
+                expr='""' if idx is None else link(columns[idx],sr)
                 if dc==8:
                     ref=f"'内业处理表'!{columns[7]}{sr}"
                     expr=f'IF(AND(ISNUMBER({ref}),{ref}>0),{ref},NA())'
@@ -338,8 +355,10 @@ def build(records,cfg):
                     ref=f"'内业处理表'!{columns[17]}{sr}"
                     expr=f'IF(OR({ref}="",{ref}="其他区域",{ref}="无"),"不涉及",{ref})'
                 if dc==23:
-                    ref=f"'内业处理表'!{columns[26]}{sr}"
+                    ref=f"'内业处理表'!{columns[25]}{sr}"
                     expr=f'IF(I{rr}<>"乔木林地","",IF(AND(ISNUMBER({ref}),{ref}>=0),{ref},NA()))'
+                if dc==28:
+                    expr=literal('是' if cfg['fee'].get('urban_planning_area') else '否')
                 detail['cells'][f'{col(dc)}{rr}']='='+expr
             rr+=1
     for g,row in group_rows.items():
@@ -363,14 +382,13 @@ def build(records,cfg):
             if isinstance(value,(int,float)) and value>=0 and int(value)==value:
                 detail['display_checks'][addr]=str(int(value)).zfill(len(fmt))
             elif isinstance(value,str):detail['display_checks'][addr]=value
-        value=r['values'][27]
+        value=r['values'][26]
         detail['display_checks'][f'X{r["detail"]}']='' if value in (None,'',0) else str(int(value))
     owners=['计','国有','集体'];size=len(gs)*3;sheets=[detail]
     titles=['林地类型','现状地类','森林类别','林地保护等级']
     for n in range(1,5):
         head,nc=(7,17) if n==3 else (5,14 if n==1 else 17 if n==2 else 11)
         s=make_sheet(f'B.{n}',head,nc);s['cells']['A1']=report_title(cfg,f'按{titles[n-1]}面积与蓄积统计表',f'B.{n}')
-        if n==2:s['cells']['Q5']='其他无立\n木林地'
         for metric,offset in [('area',0),('volume',size)]:
             start=head+1+offset;labels(s,gs,owners,start,2);merge(s,f'A{start}:A{start+size-1}','面积' if metric=='area' else '蓄积')
             for i,g in enumerate(gs):
@@ -419,9 +437,9 @@ def build(records,cfg):
     s['formats'] += [(f'{c}6:{c}{s["last"]}','@') for c in ('C','E','G','I')]
     sheets.append(s)
     sheets.append(build_fee(records,cfg,gs,totals))
-    status=make_sheet('现状调查表',35,19);status['last']=35;status['preserve_body']=True
+    status=make_sheet('现状调查表',38,19);status['last']=38;status['preserve_body']=True
     status['cells'].update(cfg['status_fields']);status['cells'].update({'A1':report_title(cfg,'现状调查表'),'D3':cfg['project_name'],'A16':report_title(cfg,'现状调查表（续）')})
-    for metric,start in [('area',7),('volume',10)]:
+    for metric,start in [('area',8),('volume',11)]:
         for j,o in enumerate(owners):
             row=start+j;base=base_criteria((),o);totals.put(status,f'D{row}',metric,base)
             for c,lt in enumerate(TYPES[:6],5):
@@ -431,14 +449,14 @@ def build(records,cfg):
     # The fixed status-form has no column for 其他林地. Do not silently hide it.
     if any(r['land_class']==CLASSES[-1] or r['land_type']=='其他林地' for r in records):
         raise ValueError('The status-form template has no other-land column; confirm an extended form before generating')
-    for row in [7,8,9,10,11,12]:
+    for row in [8,9,10,11,12,13]:
         # Surface later edits to unsupported categories without declaring success.
-        metric='area' if row<10 else 'volume';base=base_criteria((),owners[(row-7)%3])
-        check=totals.formula('area',base)
-        covered='+'.join(totals.formula('area',base+[('I',c)]) for c in CLASSES[:9])
+        metric='area' if row<11 else 'volume';base=base_criteria((),owners[(row-8)%3])
+        check=totals.formula(metric,base)
+        covered='+'.join(totals.formula(metric,base+[('I',c)]) for c in CLASSES[:9])
         old=status['cells'][f'D{row}'][1:];status['cells'][f'D{row}']=f'=IF(ABS({check}-({covered}))<0.00000001,{old},"分类需核查")'
-    if cfg['fee']['mode']=='not_applicable':status['cells']['A13']='="森林植被恢复费："&\'B.7\'!A8'
-    else:status['cells']['A13']='=IF(ISNUMBER(\'B.7\'!G8),"森林植被恢复费'+('参考测算' if cfg['fee']['mode']=='reference' else '测算')+'："&TEXT(\'B.7\'!G8,"0.0000")&"万元","森林植被恢复费：待核定")'
+    if 'A14' not in cfg['status_fields']:
+        status['cells']['A14']='=IF(ISNUMBER(\'B.7\'!G7),"森林植被恢复费'+('参考测算' if cfg['fee']['mode']=='reference' else '测算')+'："&TEXT(\'B.7\'!G7,"0.0000")&"万元","森林植被恢复费：待核定")'
     sheets.insert(0,status)
     for s in sheets:
         s.setdefault('table_last',s['last'])
@@ -453,39 +471,41 @@ def build_fee(records,cfg,gs,totals):
     s['cells']['A1']=report_title(cfg,'森林植被恢复费'+('参考测算表' if fee['mode']=='reference' else '测算表'),'B.7')
     if fee['mode']=='not_applicable':
         merge(s,'A8:M9','不适用：'+fee['basis']);s['last']=9;return s
-    s['cells'].update({'H4':'乔木林地等（10元类）','K4':'灌木林地等（6元类）','I8':10,'L8':6})
+    s['cells'].update({'H3':'乔木林地等（10元类）','K3':'灌木林地等（6元类）','I7':10,'L7':6})
     # Global project conditions are explicit; forest status remains a live predicate.
     factor=2 if fee['urban_planning_area'] or fee['project_kind']=='经营性' else 1
     def area_expr(base,band,forests=None):
         tests=[[('I','乔木林地'),('U','>=0.2')]]+[[('I',c)] for c in ['竹林地','苗圃地','采伐迹地','火烧迹地']] if band==10 else [[('I',c)] for c in ['国家特别规定灌木林地','一般灌木林地','疏林地','未成林造林地']]
         return '+'.join(totals.formula('area',base+t+([('L',f)] if f else [])) for t in tests for f in (forests if forests is not None else [None])) or '0'
-    labels(s,gs,['计','国有','集体'],8,1)
+    labels(s,gs,['计','国有','集体'],7,1)
     doubled=[k for k,v in cfg['forest_map'].items() if v in FORESTS[:4]]
     for i,g in enumerate(gs):
         for j,o in enumerate(['计','国有','集体']):
-            row=8+3*i+j;base=base_criteria(g,o);totals.put(s,f'F{row}','area',base)
+            row=7+3*i+j;base=base_criteria(g,o);totals.put(s,f'F{row}','area',base)
             s['cells'][f'H{row}']='='+area_expr(base,10);s['cells'][f'K{row}']='='+area_expr(base,6)
             known='+'.join(totals.formula('area',base+[('L',k)]) for k in cfg['forest_map'])
-            guard=f'AND(ABS(F{row}-H{row}-K{row})<0.00000001,ABS(F{row}-({known}))<0.00000001,ISNUMBER($I$8),ISNUMBER($L$8),$I$8>=0,$L$8>=0)'
+            guard=f'AND(ABS(F{row}-H{row}-K{row})<0.00000001,ABS(F{row}-({known}))<0.00000001,ISNUMBER($I$7),ISNUMBER($L$7),$I$7>=0,$L$7>=0)'
             for band,ac,rate,fc in [(10,'H','I','J'),(6,'K','L','M')]:
-                if row!=8:s['cells'][f'{rate}{row}']=f'=${rate}$8'
+                if row!=7:s['cells'][f'{rate}{row}']=f'=${rate}$7'
                 extra=area_expr(base,band,doubled)
-                s['cells'][f'{fc}{row}']=f'=IF({guard},({ac}{row}+({extra}))*${rate}$8*{factor},"待核定")'
+                s['cells'][f'{fc}{row}']=f'=IF({guard},({ac}{row}+({extra}))*${rate}$7*{factor},"待核定")'
             s['cells'][f'G{row}']=f'=IF(AND(ISNUMBER(J{row}),ISNUMBER(M{row})),J{row}+M{row},"待核定")'
             items=[r for r in records if r['admin'][:len(g)]==g and (o=='计' or r['own']==o)]
             amount=0;supported=True
             for r in items:
-                lc=r['land_class'];rate=10 if lc in ['竹林地','苗圃地','采伐迹地','火烧迹地'] or lc=='乔木林地' and r['values'][24]>=.2 else 6 if lc in ['国家特别规定灌木林地','一般灌木林地','疏林地','未成林造林地'] else None
+                lc=r['land_class'];rate=10 if lc in ['竹林地','苗圃地','采伐迹地','火烧迹地'] or lc=='乔木林地' and r['values'][23]>=.2 else 6 if lc in ['国家特别规定灌木林地','一般灌木林地','疏林地','未成林造林地'] else None
                 if rate is None:supported=False;continue
                 amount+=r['area']*rate*factor*(2 if r['forest_category'] in doubled else 1)
             if supported:s['checks'][f'G{row}']=amount
-    s['last']=7+len(gs)*3;s['table_last']=s['last'];s['last']+=1
+    s['table_last']=6+len(gs)*3;s['last']=s['table_last']+4
     note=HEBEI_BASIS+'。\n'+HEBEI_NOTE+'\n'+('规划区内' if fee['urban_planning_area'] else '规划区外')+'；'+fee['project_kind']+'。'
     if fee['mode']=='reference':note+='本表仅为参考测算，不作为应缴金额。'
     if cfg['use_nature']=='临时':note+='临时使用林地不再收取森林植被恢复费，实际恢复工程费用另计（国家林草局2023年第13号公告）。'
-    merge(s,f'A{s["last"]}:M{s["last"]}',note);s['heights'][str(s['last'])]=100
-    s['style_rows']={str(s['last']):23}
-    s['formats']=[(f'F8:M{s["table_last"]}','0.0000;-0.0000;;@'),(f'I8:I{s["table_last"]}','0.00;-0.00;;@'),(f'L8:L{s["table_last"]}','0.00;-0.00;;@')]
+    else:note+='永久使用林地仍需开展植被恢复测算，恢复地点按批准的异地恢复安排执行。'
+    note_start=s['table_last']+1;note_end=note_start+3
+    merge(s,f'A{note_start}:M{note_end}',note);s['heights'][str(note_start)]=100
+    s['style_rows']={str(row):row for row in range(note_start,note_end+1)}
+    s['formats']=[(f'F7:M{s["table_last"]}','0.0000;-0.0000;;@'),(f'I7:I{s["table_last"]}','0.00;-0.00;;@'),(f'L7:L{s["table_last"]}','0.00;-0.00;;@')]
     return s
 
 
@@ -743,35 +763,31 @@ def restore_retained_styles(source, candidate):
     os.replace(temporary,candidate)
 
 
-def clear_report_print_metadata(path, report_names):
-    """Remove print areas, page setup, margins, and breaks from generated reports only."""
+def remove_external_links(path):
+    """Remove Excel's transient template-copy external-link package parts."""
     path=Path(path)
     with zipfile.ZipFile(path) as archive:
         entries=archive.infolist();parts={e.filename:archive.read(e) for e in entries}
-    workbook=minidom.parseString(parts['xl/workbook.xml'])
+    external=[name for name in parts if name.startswith('xl/externalLinks/')]
+    if not external:return
+    workbook=ET.fromstring(parts['xl/workbook.xml'])
+    for node in list(workbook.findall('s:externalReferences',NS)):
+        workbook.remove(node)
     rels=ET.fromstring(parts['xl/_rels/workbook.xml.rels'])
-    relmap={r.attrib['Id']:r.attrib['Target'] for r in rels}
-    sheet_parts={}
-    sheets=workbook.getElementsByTagNameNS(NS['s'],'sheet')
-    for index,sheet in enumerate(sheets):
-        if sheet.getAttribute('name') not in report_names:continue
-        rid=sheet.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','id')
-        target=relmap[rid].lstrip('/') if relmap[rid].startswith('/') else posixpath.normpath('xl/'+relmap[rid])
-        sheet_parts[target]=index
-    for part in sheet_parts:
-        doc=minidom.parseString(parts[part])
-        for node in list(doc.getElementsByTagNameNS(NS['s'],'pageMargins'))+list(doc.getElementsByTagNameNS(NS['s'],'pageSetup'))+list(doc.getElementsByTagNameNS(NS['s'],'printOptions'))+list(doc.getElementsByTagNameNS(NS['s'],'rowBreaks'))+list(doc.getElementsByTagNameNS(NS['s'],'colBreaks'))+list(doc.getElementsByTagNameNS(NS['s'],'headerFooter')):
-            node.parentNode.removeChild(node)
-        for node in list(doc.getElementsByTagNameNS(NS['s'],'pageSetUpPr')):
-            node.parentNode.removeChild(node)
-        parts[part]=doc.toxml(encoding='utf-8')
-    for node in list(workbook.getElementsByTagNameNS(NS['s'],'definedName')):
-        if node.getAttribute('name') in ('_xlnm.Print_Area','_xlnm.Print_Titles') and int(node.getAttribute('localSheetId') or -1) in sheet_parts.values():
-            node.parentNode.removeChild(node)
-    parts['xl/workbook.xml']=workbook.toxml(encoding='utf-8')
+    for node in list(rels):
+        if 'externalLink' in node.attrib.get('Target',''):
+            rels.remove(node)
+    content=ET.fromstring(parts['[Content_Types].xml'])
+    for node in list(content):
+        if node.attrib.get('PartName','').startswith('/xl/externalLinks/'):
+            content.remove(node)
+    parts['xl/workbook.xml']=ET.tostring(workbook,encoding='utf-8',xml_declaration=True)
+    parts['xl/_rels/workbook.xml.rels']=ET.tostring(rels,encoding='utf-8',xml_declaration=True)
+    parts['[Content_Types].xml']=ET.tostring(content,encoding='utf-8',xml_declaration=True)
     temporary=path.with_suffix(path.suffix+'.tmp')
     with zipfile.ZipFile(temporary,'w') as archive:
-        for entry in entries:archive.writestr(entry,parts[entry.filename])
+        for entry in entries:
+            if entry.filename not in external:archive.writestr(entry,parts[entry.filename])
     os.replace(temporary,path)
 
 
@@ -785,6 +801,20 @@ def verify_report_borders(sheet, reference, cols, head):
 
 
 def verify_preserved(before, after, retained):
+    def xml_signature(node, normalize_view=False):
+        if node is None:
+            return None
+        node=deepcopy(node)
+        if normalize_view:
+            for view in node.findall('.//s:sheetView',NS):
+                view.attrib.pop('tabSelected',None)
+            # ElementTree has no parent pointers; remove selections explicitly.
+            for view in node.findall('.//s:sheetView',NS):
+                for child in list(view):
+                    if child.tag == '{%s}selection' % NS['s']:
+                        view.remove(child)
+        return ET.tostring(node)
+
     for sn in retained:
         x,y=before[sn],after[sn]
         keys=set(x['cells'])|set(y['cells'])
@@ -798,7 +828,7 @@ def verify_preserved(before, after, retained):
             if not cache[pair]:raise ValueError(f'Preserved style changed: {sn}!{key}')
         for field in ('names','state'):
             if x.get(field)!=y.get(field):raise ValueError(f'Preserved sheet setting changed: {sn}/{field}')
-        for tag in ['mergeCells','cols','pageMargins','pageSetup','printOptions','rowBreaks','colBreaks','headerFooter','sheetProtection']:
+        for tag in ['mergeCells','cols','dataValidations','conditionalFormatting','sheetViews','sheetProtection']:
             aa,bb=deepcopy(x['xml'].find('s:'+tag,NS)),deepcopy(y['xml'].find('s:'+tag,NS))
             if tag=='mergeCells':
                 for node in (aa,bb):
@@ -808,7 +838,11 @@ def verify_preserved(before, after, retained):
                     if node is not None:
                         for c in node:
                             if 'style' in c.attrib:c.set('style',style_signature(sh,int(c.attrib['style'])))
-            if (ET.tostring(aa) if aa is not None else None)!=(ET.tostring(bb) if bb is not None else None):raise ValueError(f'Preserved sheet setting changed: {sn}/{tag}')
+            if tag=='sheetViews':
+                left,right=xml_signature(aa,True),xml_signature(bb,True)
+            else:
+                left,right=xml_signature(aa),xml_signature(bb)
+            if left!=right:raise ValueError(f'Preserved sheet setting changed: {sn}/{tag}')
         def rows(sh):return [(r.attrib['r'],r.attrib.get('ht'),r.attrib.get('hidden')) for r in sh['xml'].find('s:sheetData',NS)]
         if rows(x)!=rows(y):raise ValueError(f'Preserved row layout changed: {sn}')
 
@@ -847,10 +881,6 @@ def validate_candidate(source, candidate, payload):
             actual=number_format(sh,sh['cells'].get(addr,{}).get('style',0))
             if actual.replace('\\','')!=fmt.replace('\\',''):
                 raise ValueError(f'Number format mismatch: {s["name"]}!{addr}: {actual} != {fmt}')
-        for tag in ('pageMargins','pageSetup','printOptions','rowBreaks','colBreaks','headerFooter'):
-            if sh['xml'].find('s:'+tag,NS) is not None:raise ValueError(f'Report print metadata remains: {s["name"]}/{tag}')
-        if any(name in sh.get('names',{}) for name in ('_xlnm.Print_Area','_xlnm.Print_Titles')):
-            raise ValueError(f'Report defined print name remains: {s["name"]}')
         if s['name']=='B.5':
             for addr in addresses(f'D4:{col(s["cols"])}{s["last"]}'):
                 # Merged followers inherit their anchor; inspect stored anchors only.
@@ -926,11 +956,11 @@ def main():
     job={'source':str(source),'template':str(ROOT/'assets/report-headers.xlsx'),'candidate':str(candidate),'stage':str(stage),'sheets':payload,'replace_names':sorted(REPLACED_NAMES),'input_names':[n for n in INPUT_NAMES if n in book]}
     job_path=stage/'job.json';job_path.write_text(json.dumps(job,ensure_ascii=False),encoding='utf-8-sig')
     run_excel(job_path)
+    remove_external_links(candidate)
     restore_style_components(ROOT/'assets/report-headers.xlsx',candidate,'font',payload)
     restore_style_components(ROOT/'assets/report-headers.xlsx',candidate,'border',payload)
     restore_style_components(ROOT/'assets/report-headers.xlsx',candidate,'fill',payload)
     restore_retained_styles(source,candidate)
-    clear_report_print_metadata(candidate,REPORT_NAMES)
     validate_candidate(source,candidate,payload)
     run_excel(job_path,validate_only=True)
     if digest(source)!=original:raise ValueError('Source changed during generation')

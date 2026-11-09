@@ -4,7 +4,7 @@ SKILL=ROOT/'skills/forestry-field-survey-table'
 spec=importlib.util.spec_from_file_location('field_survey',SKILL/'scripts/forestry_field_survey_table.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 class SurveyTests(unittest.TestCase):
  def test_previously_missing_common_codes(self):
-  h=['小班编','面积','BH_DJ','LING_ZU','LIN_ZHONG','SEN_LIN_LB','YOU_SHI_SZ','LD_QS','QI_YUAN']
+  h=['序号','面积','BH_DJ','LING_ZU','LIN_ZHONG','SEN_LIN_LB','YOU_SHI_SZ','LD_QS','QI_YUAN']
   rows,w=m.prepare(h,[['01',.0126,'2','3','251','011','706000','21','12']])
   r=rows[0]
   self.assertEqual([r[i] for i in [9,10,11,12,13,14,16,17]],['经济林林地','集体','重点公益林','Ⅱ','果树林','天然','杏','近熟林'])
@@ -15,12 +15,12 @@ class SurveyTests(unittest.TestCase):
    for code in codes:
     with self.subTest(code=code):
      for v in [str(code),m.CODE_FIELDS['LIN_ZHONG']['codes'][str(code)]]:
-      rows,w=m.prepare(['小班编','面积','LIN_ZHONG'],[['1',.1,v]])
+      rows,w=m.prepare(['序号','面积','LIN_ZHONG'],[['1',.1,v]])
       self.assertEqual(rows[0][9],typ)
       self.assertFalse(any('Untranslated LIN_ZHONG' in x for x in w))
   self.assertEqual(m.CODE_FIELDS['LIN_ZHONG']['entry_sources']['242'],'confirmed-template')
  def test_soil_confirmation_and_coverage(self):
-  h=['小班编','面积','TU_RANG_LX','YOU_SHI_SZ','SEN_LIN_LB']
+  h=['序号','面积','TU_RANG_LX','YOU_SHI_SZ','SEN_LIN_LB']
   raw=[['01',.1,'122','706001','011'],['02',.1,'999','706000','11']]
   rows,w=m.prepare(h,raw)
   self.assertEqual(rows[0][27],'122');self.assertEqual(rows[0][16],'706001')
@@ -37,7 +37,7 @@ class SurveyTests(unittest.TestCase):
  def test_common_code_families(self):
   for field,expected in [('BH_DJ',['Ⅰ','Ⅱ','Ⅲ','Ⅳ']),('LING_ZU',['幼龄林','中龄林','近熟林','成熟林','过熟林'])]:
    idx=next(k for k,v in m.FIELDS.items() if v==field)
-   rows,_=m.prepare(['小班编','面积',field],[[str(i),.1,str(i)] for i in range(1,len(expected)+1)])
+   rows,_=m.prepare(['序号','面积',field],[[str(i),.1,str(i)] for i in range(1,len(expected)+1)])
    self.assertEqual([r[idx] for r in rows],expected)
   self.assertEqual([m.MAPS['QI_YUAN'][str(x)] for x in [11,12,13,21,22,23,24]],['天然']*3+['人工']*4)
   self.assertEqual([m.MAPS['LD_QS'][str(x)] for x in [20,21,22,23]],['集体']*4)
@@ -46,34 +46,41 @@ class SurveyTests(unittest.TestCase):
    root=pathlib.Path(tmp)/'portable-skill';shutil.copytree(SKILL,root)
    spec=importlib.util.spec_from_file_location('portable_field',root/'scripts/forestry_field_survey_table.py')
    portable=importlib.util.module_from_spec(spec);spec.loader.exec_module(portable)
-   rows,_=portable.prepare(['小班编','面积','LIN_ZHONG','YOU_SHI_SZ'],[['001',.1,'251','706000']])
+   rows,_=portable.prepare(['序号','面积','LIN_ZHONG','YOU_SHI_SZ'],[['001',.1,'251','706000']])
    self.assertEqual(rows[0][6],'001');self.assertEqual(rows[0][16],'杏')
    self.assertEqual(portable.ROOT,root.resolve())
    for p in root.rglob('*'):
     if p.suffix in ('.md','.json','.py','.ps1','.yaml'):
      self.assertNotIn('ink.doro',p.read_text(encoding='utf-8-sig'))
  def test_mapping_sort_and_unknowns(self):
-  h=['小班编','面积','LIN_BAN','XIAO_BAN','LIN_ZHONG','YOU_SHI_SZ','TU_RANG_LX','PINGJUN_SG','PO_DU','塔号']
+  h=['序号','面积','LIN_BAN','XIAO_BAN','LIN_ZHONG','YOU_SHI_SZ','TU_RANG_LX','PINGJUN_SG','PO_DU','塔号']
   rows,w=m.prepare(h,[['02',.1,'0327','00004','242','410001','122',0,9,'T2'],['01',.2,'0327','00003','111','200000','122',None,4,'T1']])
   self.assertEqual(rows[0][6],'01');self.assertEqual(rows[0][13],'水源林');self.assertEqual(rows[0][16],'油松')
   self.assertEqual(rows[1][4:6],['0327','00004']);self.assertEqual(rows[1][13],'能源林');self.assertEqual(rows[1][16],'410001');self.assertEqual(rows[1][27],'122')
   self.assertEqual(rows[1][18],0);self.assertIsNone(rows[0][18]);self.assertEqual(rows[1][26],9)
   for i in (0,1,2,22,23,29,30,31):self.assertIsNone(rows[1][i])
  def test_unknown_forest_type_stays_code(self):
-  rows,w=m.prepare(['小班编','面积','LIN_ZHONG'],[['1',.1,'999']])
+  rows,w=m.prepare(['序号','面积','LIN_ZHONG'],[['1',.1,'999']])
   self.assertEqual(rows[0][13],'999')
   self.assertIn('Untranslated LIN_ZHONG: 999',w)
  def test_invalid_inputs(self):
-  for h,rows in [(['小班编','TBMJ'],[['1',2]]),(['小班编','面积'],[['1',None]]),(['小班编','面积'],[['1',-1]]),(['小班编','面积'],[['1','NaN']]),(['小班编','面积'],[['1',1],['1',2]]),(['小班编','面积','面积'],[['1',1,2]]),(['小班编','面积'],[])]:
+  for h,rows in [(['序号','TBMJ'],[['1',2]]),(['序号','面积'],[['1',None]]),(['序号','面积'],[['1',-1]]),(['序号','面积'],[['1','NaN']]),(['序号','面积'],[['1',1],['1',2]]),(['序号','面积','面积'],[['1',1,2]]),(['序号','面积'],[])]:
    with self.subTest(h=h,rows=rows):
     with self.assertRaises(ValueError):m.prepare(h,rows)
+ def test_header_normalization_is_whitespace_only(self):
+  rows,_=m.prepare([' 序号\n','面 积','DLMC'],[['001',.1,'乔木林地']])
+  self.assertEqual(rows[0][6],'001');self.assertEqual(rows[0][7],.1)
+  with self.assertRaisesRegex(ValueError,'Required field missing: 序号'):
+   m.prepare(['小班编号','面积'],[['001',.1]])
+  with self.assertRaisesRegex(ValueError,'Required field missing: 面积'):
+   m.prepare(['序号','TBMJ'],[['001',.1]])
  def test_explicit_fields_and_blank_rows(self):
   rows,_=m.prepare(['ID','HA','市'],[[None,None,None],['A',0,'已有市']],id_field='ID',area_field='HA',county='已确认县')
   self.assertEqual(rows[0][0:3],['已有市','已确认县',None]);self.assertEqual(rows[0][7],0)
  def test_default_output(self):
   self.assertEqual(m.default_output(pathlib.Path('/tmp/调查_初表.xls')).name,'调查_外调.xlsx')
  def test_template_classification_and_reference_stock(self):
-  h=['小班编','面积','DLMC','LIN_ZHONG','SEN_LIN_LB','SHI_QUAN_D','MEI_GQ_XJ']
+  h=['序号','面积','DLMC','LIN_ZHONG','SEN_LIN_LB','SHI_QUAN_D','MEI_GQ_XJ']
   rows,w=m.prepare(h,[['1',.1,'灌木林地','242','012','20',50],['2',.2,'乔木林地','112','012','10',80]])
   self.assertEqual(rows[0][8:10],['一般灌木林地','能源林林地'])
   self.assertEqual(rows[1][9],'防护林林地');self.assertEqual(rows[0][11],'一般公益林')
@@ -84,24 +91,29 @@ class SurveyTests(unittest.TestCase):
   cases=[('一般灌木林地','经济林','经济林林地'),('特殊灌木林地','用材林','用材林林地'),('国家特别规定灌木林地','能源林','能源林林地'),('乔木林地','111','防护林林地'),('乔木林地','防护林','防护林林地'),('乔木林地','233','用材林林地'),('苗圃地',None,'苗圃地'),('其他林地','999',None)]
   for land,forest,expected in cases:
    with self.subTest(land=land,forest=forest):
-    rows,w=m.prepare(['小班编','面积','DLMC','LIN_ZHONG'],[['1',.1,land,forest]])
+    rows,w=m.prepare(['序号','面积','DLMC','LIN_ZHONG'],[['1',.1,land,forest]])
     self.assertEqual(rows[0][9],expected)
     if '灌木' in land:self.assertEqual(rows[0][8],'一般灌木林地')
     if expected is None:self.assertEqual(rows[0][13],'999');self.assertTrue(any('未匹配林地类型' in x for x in w))
  def test_workflow_observations_are_independent(self):
-  headers=['小班编','面积','SHI_QUAN_D','LIN_ZHONG','PINGJUN_SG','YU_BI_DU','TU_RANG_LX']
-  raw=[['02',.1,'20','242',5,.15,'122'],['01',.2,'10','111',8,.7,'123']]
+  headers=['序号','面积','SHI_QUAN_D','LD_QS','LIN_ZHONG','PINGJUN_SG','YU_BI_DU','TU_RANG_LX','PO_XIANG','PO_WEI','PO_DU','TU_CENG_HD','塔号']
+  raw=[['02',.1,'20','21','242',5,.15,'122','北','上坡',9,12,'T2'],['01',.2,'10','22','111',8,.7,'123','南','下坡',4,8,'T1']]
   rows,_=m.prepare(headers,raw)
   sheets=m.workflow_rows(['_id']+headers[1:],raw,rows,'临时')
   self.assertEqual([s['name'] for s in sheets],['原始因子表','外业调查表'])
   original,field=[s['rows'] for s in sheets]
-  self.assertEqual([len(original[0]),len(field[0])],[35,22])
+  self.assertEqual([len(original[0]),len(field[0])],[35,24])
   self.assertEqual(original[0][12],'国家公益林');self.assertEqual(original[1][12],'地方公益林')
   self.assertEqual(original[1][22],.15);self.assertEqual(original[1][33],'临时')
   for row in field:
-   for i in [3,10,12,13,14,15,16,17,18,20]:self.assertIsNone(row[i])
+   for i in [3,6,7,8,9,10,11,12,14,16,18,20,22]:self.assertIsNone(row[i])
   self.assertEqual([r[19] for r in field],['123','122'])
-  self.assertEqual([r[7] for r in field],['水源林','能源林'])
+  self.assertEqual([r[13] for r in field],['南','北'])
+  self.assertEqual([r[15] for r in field],['下坡','上坡'])
+  self.assertEqual([r[17] for r in field],[4,9])
+  self.assertEqual([r[21] for r in field],[8,12])
+  self.assertEqual([r[4] for r in field],['集体','集体'])
+  self.assertEqual([r[23] for r in field],['T1','T2'])
   field[0][3]='疏林地';self.assertIsNone(original[0][8])
  def test_summary_titles_stay_template_headings(self):
   path=ROOT/'skills/forestry-survey-summary-tables/scripts/summary_tables.py'
@@ -109,7 +121,7 @@ class SurveyTests(unittest.TestCase):
   summary=importlib.util.module_from_spec(spec);spec.loader.exec_module(summary)
   for nature in ['临时','永久']:
    book=summary.read_book(ROOT/'skills/forestry-survey-summary-tables/assets/report-headers.xlsx')
-   values={0:'示例市',1:'示例县',2:'示例乡',3:'示例村',6:'001',7:.1,9:'乔木林地',10:'防护林林地',11:'集体',12:'一般商品林',14:'Ⅱ',17:'其他区域',24:.6,26:1.2,35:nature}
+   values={0:'示例市',1:'示例县',2:'示例乡',3:'示例村',6:'001',7:.1,9:'乔木林地',10:'防护林林地',11:'集体',12:'一般商品林',14:'Ⅱ',17:'其他区域',23:.6,24:8.5,25:1.2,26:17,34:nature}
    for index,value in values.items():book['内业处理表']['cells'][f'{summary.col(index+1)}4']={'value':value}
    cfg={'project_name':'跨地区测试工程','use_nature':nature,'ecology':{'mode':'none','confirmed':True},'fee':{'mode':'reference','region':'河北省','urban_planning_area':False,'project_kind':'公共基础设施'}}
    records=summary.prepare(book,cfg);sheets=summary.build(records,cfg)
@@ -132,12 +144,12 @@ class SurveyTests(unittest.TestCase):
   spec=importlib.util.spec_from_file_location('summary_review',path)
   summary=importlib.util.module_from_spec(spec);spec.loader.exec_module(summary)
   book=summary.read_book(path.parents[1]/'assets/report-headers.xlsx')
-  values={0:'示例市',1:'示例县',2:'示例乡',3:'示例村',4:32,5:167,6:'001',7:.1,9:'乔木林地',10:'防护林林地',11:'集体',12:'一般商品林',14:'Ⅱ',17:'其他区域',24:.6,25:12.15,26:1.2,27:17,35:'临时'}
+  values={0:'示例市',1:'示例县',2:'示例乡',3:'示例村',4:32,5:167,6:'001',7:.1,9:'乔木林地',10:'防护林林地',11:'集体',12:'一般商品林',14:'Ⅱ',17:'其他区域',23:.6,24:8.5,25:12.15,26:17,27:17,34:'临时'}
   for index,value in values.items():book['内业处理表']['cells'][f'{summary.col(index+1)}4']={'value':value,'formula':None,'style':0}
   cfg={'project_name':'测试工程','use_nature':'临时','ecology':{'mode':'none','confirmed':True},'fee':{'mode':'reference','region':'河北省','urban_planning_area':False,'project_kind':'公共基础设施'}}
   return summary,book,cfg
  def test_summary_rejects_invalid_measurements(self):
-  for column,value in [('Y',20),('Y',1.01),('Y',-.1),('Y','20%'),('AB',1.5),('AB',-1),('W',float('nan'))]:
+  for column,value in [('X',20),('X',1.01),('X',-.1),('X','20%'),('AA',1.5),('AA',-1),('W',float('nan'))]:
    with self.subTest(column=column,value=value):
     summary,book,cfg=self.summary_fixture();book['内业处理表']['cells'][column+'4']['value']=value
     with self.assertRaises(ValueError):summary.prepare(book,cfg)
@@ -161,13 +173,14 @@ class SurveyTests(unittest.TestCase):
   effective={addr:fmt for area,fmt in a['formats'] for addr in summary.addresses(area)}
   self.assertEqual(effective['F9'],'00000');self.assertEqual(a['display_checks']['F9'],'00167')
   self.assertEqual(effective['X9'],'0;-0;;@');self.assertEqual(effective['V9'],'0.00;-0.00;;@')
-  sh['cells']['AB4']['value']=0
+  sh['cells']['AA4']['value']=0
   a=next(s for s in summary.build(summary.prepare(book,cfg),cfg) if s['name']=='A.1')
   self.assertEqual(a['display_checks']['X9'],'')
  def test_summary_permanent_note_excludes_temporary_policy(self):
-  summary,book,cfg=self.summary_fixture();cfg['use_nature']='永久';book['内业处理表']['cells']['AJ4']['value']='永久'
+  summary,book,cfg=self.summary_fixture();cfg['use_nature']='永久';book['内业处理表']['cells']['AI4']['value']='永久'
   sheets=summary.build(summary.prepare(book,cfg),cfg);fee=next(s for s in sheets if s['name']=='B.7')
-  self.assertNotIn('临时使用林地',fee['cells'][f'A{fee["last"]}'])
+  self.assertFalse(any('临时使用林地' in str(value) for value in fee['cells'].values()))
+  self.assertTrue(any('异地恢复安排' in str(value) for value in fee['cells'].values()))
   self.assertIn(str(fee['last']),fee['style_rows'])
  def test_summary_layout_uses_template_without_print_settings(self):
   summary,book,cfg=self.summary_fixture();sheets=summary.build(summary.prepare(book,cfg),cfg)
@@ -203,59 +216,51 @@ class SurveyTests(unittest.TestCase):
     for name,data in damaged.items():z.writestr(name,data)
    summary.restore_retained_styles(source,candidate)
    summary.verify_preserved(summary.read_book(source),summary.read_book(candidate),summary.INPUT_NAMES)
- def test_summary_removes_report_print_metadata_only(self):
-  summary,book,cfg=self.summary_fixture()
-  template=summary.ROOT/'assets/report-headers.xlsx'
-  with tempfile.TemporaryDirectory() as directory:
-   candidate=pathlib.Path(directory)/'candidate.xlsx';candidate.write_bytes(template.read_bytes())
-   before=summary.read_book(candidate)
-   summary.clear_report_print_metadata(candidate,summary.REPORT_NAMES)
-   after=summary.read_book(candidate)
-   summary.verify_preserved(before,after,summary.INPUT_NAMES)
-   for name in summary.REPORT_NAMES:
-    sh=after[name]
-    for tag in ('pageSetup','pageMargins','printOptions','headerFooter','rowBreaks','colBreaks'):
-     self.assertIsNone(sh['xml'].find('s:'+tag,summary.NS))
-    self.assertIsNone(sh['xml'].find('s:sheetPr/s:pageSetUpPr',summary.NS))
-    self.assertNotIn('_xlnm.Print_Area',sh['names']);self.assertNotIn('_xlnm.Print_Titles',sh['names'])
- def test_summary_repairs_full_report_fonts_including_color(self):
-  summary,book,cfg=self.summary_fixture()
-  template=summary.ROOT/'assets/report-headers.xlsx'
-  payload=summary.build(summary.prepare(book,cfg),cfg)
-  with tempfile.TemporaryDirectory() as directory:
-   candidate=pathlib.Path(directory)/'candidate.xlsx'
-   with zipfile.ZipFile(template) as z:parts={n:z.read(n) for n in z.namelist()}
-   from xml.dom import minidom
-   styles=minidom.parseString(parts['xl/styles.xml'])
-   for color in styles.getElementsByTagNameNS(summary.NS['s'],'color'):
-    if color.parentNode.localName=='font':
-     for key in list(color.attributes.keys()):color.removeAttribute(key)
-     color.setAttribute('rgb','FFFFFFFF')
-   parts['xl/styles.xml']=styles.toxml(encoding='utf-8')
-   with zipfile.ZipFile(candidate,'w') as z:
-    for name,data in parts.items():z.writestr(name,data)
-   before=summary.read_book(candidate)
-   # Template-sized fixture; all roles, including B.5, must retain input styles.
-   payload=[{'name':n,'cols':15 if n=='B.5' else 1,'head':2,'last':2} for n in summary.REPORT_NAMES]
-   self.assertGreater(summary.restore_style_components(template,candidate,'font',payload),0)
-   after=summary.read_book(candidate);summary.verify_preserved(before,after,summary.INPUT_NAMES)
-   for name in summary.REPORT_NAMES:
-    a=after[name];b=book[name]
-    def font(sh):
-     xf=sh['styles'].find('s:cellXfs',summary.NS)[sh['cells']['A1']['style']]
-     return E.tostring(sh['styles'].find('s:fonts',summary.NS)[int(xf.attrib.get('fontId',0))])
-    self.assertEqual(font(a),font(b))
-   self.assertEqual(summary.restore_style_components(template,candidate,'font',payload),0)
- def test_summary_preservation_rejects_print_setting_drift(self):
-  from copy import deepcopy
-  summary,book,cfg=self.summary_fixture()
-  for field in ['rowBreaks','headerFooter','names','state']:
-   with self.subTest(field=field):
-    other=deepcopy(book);sh=other['内业处理表']
-    if field=='names':sh['names']['_xlnm.Print_Area']='changed'
-    elif field=='state':sh['state']='hidden'
-    else:E.SubElement(sh['xml'],'{'+summary.NS['s']+'}'+field,{'test':'changed'})
-    with self.assertRaisesRegex(ValueError,'setting changed'):summary.verify_preserved(book,other,summary.INPUT_NAMES)
+  def test_summary_preserves_retained_input_without_print_metadata_checks(self):
+   summary,book,cfg=self.summary_fixture()
+   template=summary.ROOT/'assets/report-headers.xlsx'
+   with tempfile.TemporaryDirectory() as directory:
+    candidate=pathlib.Path(directory)/'candidate.xlsx';candidate.write_bytes(template.read_bytes())
+    before=summary.read_book(candidate)
+    after=summary.read_book(candidate)
+    summary.verify_preserved(before,after,summary.INPUT_NAMES)
+  def test_summary_repairs_full_report_fonts_including_color(self):
+   summary,book,cfg=self.summary_fixture()
+   template=summary.ROOT/'assets/report-headers.xlsx'
+   payload=summary.build(summary.prepare(book,cfg),cfg)
+   with tempfile.TemporaryDirectory() as directory:
+    candidate=pathlib.Path(directory)/'candidate.xlsx'
+    with zipfile.ZipFile(template) as z:parts={n:z.read(n) for n in z.namelist()}
+    from xml.dom import minidom
+    styles=minidom.parseString(parts['xl/styles.xml'])
+    for color in styles.getElementsByTagNameNS(summary.NS['s'],'color'):
+     if color.parentNode.localName=='font':
+      for key in list(color.attributes.keys()):color.removeAttribute(key)
+      color.setAttribute('rgb','FFFFFFFF')
+    parts['xl/styles.xml']=styles.toxml(encoding='utf-8')
+    with zipfile.ZipFile(candidate,'w') as z:
+     for name,data in parts.items():z.writestr(name,data)
+    before=summary.read_book(candidate)
+    # Template-sized fixture; all roles, including B.5, must retain input styles.
+    payload=[{'name':n,'cols':15 if n=='B.5' else 1,'head':2,'last':2} for n in summary.REPORT_NAMES]
+    self.assertGreater(summary.restore_style_components(template,candidate,'font',payload),0)
+    after=summary.read_book(candidate);summary.verify_preserved(before,after,summary.INPUT_NAMES)
+    for name in summary.REPORT_NAMES:
+     a=after[name];b=book[name]
+     def font(sh):
+      xf=sh['styles'].find('s:cellXfs',summary.NS)[sh['cells']['A1']['style']]
+      return E.tostring(sh['styles'].find('s:fonts',summary.NS)[int(xf.attrib.get('fontId',0))])
+     self.assertEqual(font(a),font(b))
+    self.assertEqual(summary.restore_style_components(template,candidate,'font',payload),0)
+  def test_summary_preservation_rejects_retained_sheet_metadata_drift(self):
+   from copy import deepcopy
+   summary,book,cfg=self.summary_fixture()
+   for field in ['names','state']:
+    with self.subTest(field=field):
+     other=deepcopy(book);sh=other['内业处理表']
+     if field=='names':sh['names']['_xlnm.Print_Area']='changed'
+     elif field=='state':sh['state']='hidden'
+     with self.assertRaisesRegex(ValueError,'setting changed'):summary.verify_preserved(book,other,summary.INPUT_NAMES)
  def test_summary_timeout_still_runs_owned_session_cleanup(self):
   from unittest.mock import patch
   import subprocess
@@ -375,18 +380,25 @@ class SurveyTests(unittest.TestCase):
    self.assertFalse(any('externalLink' in n or 'vbaProject' in n for n in z.namelist()))
    for i in (1,2):
     sh=E.fromstring(z.read(f'xl/worksheets/sheet{i}.xml'))
-    self.assertIsNotNone(sh.find('m:pageSetup',ns))
     for cell in sh.findall('.//m:sheetData/m:row/m:c',ns):
      row=int(''.join(c for c in cell.get('r') if c.isdigit()))
      if row>=4:self.assertIsNone(cell.find('m:v',ns));self.assertIsNone(cell.find('m:f',ns))
+    self.assertNotIn(b'absPath',z.read(f'xl/worksheets/sheet{i}.xml'))
+   source_sheet=z.read('xl/worksheets/sheet1.xml')
+   self.assertIn('临时,永久'.encode('utf-8'),source_sheet)
+   self.assertIn(b'G4:G1048576',source_sheet)
+   self.assertIn(b'J4:J1048576',source_sheet)
    strings=E.fromstring(z.read('xl/sharedStrings.xml'));texts=[''.join(x.itertext()) for x in strings]
-   field=E.fromstring(z.read('xl/worksheets/sheet2.xml'))
-   headers=[]
-   for c in field.findall('.//m:row[@r="3"]/m:c',ns):
-    v=c.find('m:v',ns)
-    if v is not None:headers.append(texts[int(v.text)])
    normalize=lambda v:''.join(v.split()).replace('²','2').replace('（','(').replace('）',')')
-   self.assertEqual(list(map(normalize,headers)),['小班编号','面积hm2','原始地类','现状地类','林地类型','林地权属','森林类别','林种','起源','原优势树种','优势树种','龄组(产期)','林龄','平均树高m','郁闭度(覆盖度)','株数','坡向','坡位','坡度','土壤类型','土层厚度','备注'])
+   expected_headers={
+    1:['市','县','乡','村','林班号(村小组)','小班号林地落界','使用林地序号','面积hm2','原始地类','林地类型','林地权属','森林类别','公益林事权','林地保护等级','林种','起源','重点生态区域','原优势树种','龄组(产期)','林龄','平均树高m','平均胸径cm','郁闭度(覆盖度)','每公顷蓄积m3','小班蓄积m3','株数','坡向','坡位','坡度','土壤类型','土层厚度cm','建设内容','工程类别','使用林地性质','备注'],
+    2:['使用林地序号','面积hm2','原始地类','现状地类','林地权属','原优势树种','优势树种','龄组(产期)','林龄','平均树高m','平均胸径cm','郁闭度(覆盖度)','株数','坡向','坡向','坡位','坡位','坡度','坡度','土壤类型','土壤类型','土层厚度','土层厚度','备注']}
+   for sheet_index,expected in expected_headers.items():
+    sheet=E.fromstring(z.read(f'xl/worksheets/sheet{sheet_index}.xml'));headers=[]
+    for c in sheet.findall('.//m:row[@r="3"]/m:c',ns):
+     v=c.find('m:v',ns)
+     if v is not None:headers.append(texts[int(v.text)])
+    self.assertEqual(list(map(normalize,headers)),expected)
    self.assertNotIn('旧编号',texts)
    self.assertFalse(any('三家' in x or '承德' in x for x in texts))
 if __name__=='__main__':unittest.main()

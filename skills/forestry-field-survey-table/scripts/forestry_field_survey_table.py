@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 
@@ -21,11 +22,19 @@ for key, land_type in CODE_FIELDS['LIN_ZHONG']['land_types'].items():
     LAND_TYPES[CODE_FIELDS['LIN_ZHONG']['codes'][key]] = land_type
     LAND_TYPES[MAPS['LIN_ZHONG'][key]] = land_type
 SHRUB_NAMES = {"灌木林地", "一般灌木林地", "特殊灌木林地", "国家特别规定灌木林地"}
-FIELDS = {0: "市", 1: "县", 2: "乡", 3: "ZLDWMC", 4: "LIN_BAN", 5: "XIAO_BAN", 6: "小班编", 7: "面积", 8: "DLMC", 10: "LD_QS", 11: "SEN_LIN_LB", 12: "BH_DJ", 13: "LIN_ZHONG", 14: "QI_YUAN", 15: "STQWMC", 16: "YOU_SHI_SZ", 17: "LING_ZU", 18: "PINGJUN_SG", 19: "PINGJUN_XJ", 20: "YU_BI_DU", 21: "MEI_GQ_XJ", 24: "PO_XIANG", 25: "PO_WEI", 26: "PO_DU", 27: "TU_RANG_LX", 28: "TU_CENG_HD"}
+FIELDS = {0: "市", 1: "县", 2: "乡", 3: "ZLDWMC", 4: "LIN_BAN", 5: "XIAO_BAN", 6: "序号", 7: "面积", 8: "DLMC", 10: "LD_QS", 11: "SEN_LIN_LB", 12: "BH_DJ", 13: "LIN_ZHONG", 14: "QI_YUAN", 15: "STQWMC", 16: "YOU_SHI_SZ", 17: "LING_ZU", 18: "PINGJUN_SG", 19: "PINGJUN_XJ", 20: "YU_BI_DU", 21: "MEI_GQ_XJ", 24: "PO_XIANG", 25: "PO_WEI", 26: "PO_DU", 27: "TU_RANG_LX", 28: "TU_CENG_HD"}
 NUMERIC = {18, 19, 20, 21, 26, 28}
+FIELD_SURVEY_COLUMNS = 24
 
 def clean(v):
     return v.strip() if isinstance(v, str) else v
+
+
+def normalize_header(v):
+    """Ignore visual whitespace only; preserve field meaning and spelling."""
+    if v is None:
+        return None
+    return re.sub(r"\s+", "", str(v))
 
 def code(v):
     v = clean(v)
@@ -44,13 +53,15 @@ def number(v, field):
         raise ValueError(f"Invalid {field}: {v}")
     return float(n)
 
-def prepare(headers, source_rows, *, area_field="面积", id_field="小班编", city=None, county=None, township=None, soil_dictionary=None):
+def prepare(headers, source_rows, *, area_field="面积", id_field="序号", city=None, county=None, township=None, soil_dictionary=None):
     if soil_dictionary not in (None, 'revision-reference'):
         raise ValueError('Unsupported soil dictionary')
     maps = dict(MAPS)
     if soil_dictionary:
         maps['TU_RANG_LX'] = CODE_FIELDS['TU_RANG_LX']['codes']
-    headers = [clean(h) for h in headers]
+    headers = [normalize_header(h) for h in headers]
+    area_field = normalize_header(area_field)
+    id_field = normalize_header(id_field)
     present = [h for h in headers if h]
     if len(set(present)) != len(present):
         raise ValueError("Duplicate source headers")
@@ -125,7 +136,7 @@ def default_output(source):
 def dictionary_coverage(headers, rows, soil_dictionary=None):
     """Report known-but-gated values separately from absent dictionary entries."""
     result = {}
-    for index, field in enumerate(map(clean, headers)):
+    for index, field in enumerate(map(normalize_header, headers)):
         if field not in CODE_FIELDS:
             continue
         spec = CODE_FIELDS[field]
@@ -141,8 +152,10 @@ def dictionary_coverage(headers, rows, soil_dictionary=None):
     return result
 
 
-def workflow_rows(headers, source_rows, rows, use_nature=None):
+def workflow_rows(headers, source_rows, rows, use_nature):
     """Keep the source snapshot separate from blank on-site observation columns."""
+    if use_nature not in ('临时', '永久'):
+        raise ValueError('use_nature must be 临时 or 永久')
     by_id = {code(r[headers.index('_id')]): dict(zip(headers, r)) for r in source_rows
              if code(r[headers.index('_id')])}
     original, field = [], []
@@ -154,9 +167,12 @@ def workflow_rows(headers, source_rows, rows, use_nature=None):
         r = old[:12] + [authority] + old[12:18] + [None] + old[18:]
         r[33] = use_nature
         original.append(r)
-        # Compact field sheet: reference soil retained, observations left blank.
-        indices = [6,7,8,None,9,10,11,14,15,17,None,18,19,None,None,
-                   None,None,None,None,29,None,34]
+        # Match the current 24-column template: reference terrain/soil values
+        # stay in their paired reference columns; all field observations stay blank.
+        indices = [6, 7, 8, None, 10, 17, None, None, None, None, None, None,
+                   None, 26, None, 27, None, 28, None, 29, None, 30, None, 34]
+        if len(indices) != FIELD_SURVEY_COLUMNS:
+            raise AssertionError('Field survey template mapping must contain 24 columns')
         field.append([None if i is None else r[i] for i in indices])
     return [{'name': '原始因子表', 'rows': original}, {'name': '外业调查表', 'rows': field}]
 
@@ -170,13 +186,13 @@ def main():
     ap.add_argument("input", type=Path)
     ap.add_argument("--sheet", help="Required when the input has multiple worksheets")
     ap.add_argument("--output", type=Path)
-    ap.add_argument("--id-field", default="小班编")
+    ap.add_argument("--id-field", default="序号")
     ap.add_argument("--area-field", default="面积", help="Confirmed occupied area in hectares, never total original polygon area")
     ap.add_argument("--city")
     ap.add_argument("--county")
     ap.add_argument("--township")
     ap.add_argument("--project-name", help="Confirmed full project name for worksheet titles")
-    ap.add_argument("--use-nature", choices=['临时', '永久'], help='Confirmed use nature; blank if omitted')
+    ap.add_argument("--use-nature", choices=['临时', '永久'], required=True, help='Confirmed use nature')
     ap.add_argument("--soil-dictionary", choices=["revision-reference"], help="Enable bundled soil names only after source-version confirmation")
     ap.add_argument("--check-only", action="store_true")
     args = ap.parse_args()
@@ -193,13 +209,16 @@ def main():
     original = hashlib.sha256(source.read_bytes()).digest()
     with tempfile.TemporaryDirectory(prefix="forestry-field-") as tmp:
         raw = Path(tmp) / "source.json"
-        excel({"mode": "read", "input": str(source), "sheet": args.sheet, "result": str(raw)}, tmp)
+        excel({"mode": "read", "input": str(source), "sheet": args.sheet, "id_field": args.id_field, "result": str(raw)}, tmp)
         data = json.loads(raw.read_text(encoding="utf-8-sig"))
         rows, warnings = prepare(data["headers"], data["rows"], area_field=args.area_field, id_field=args.id_field, city=args.city, county=args.county, township=args.township, soil_dictionary=args.soil_dictionary)
-        headers = [clean(h) for h in data['headers']]
-        headers[headers.index(args.id_field)] = '_id'
+        headers = [normalize_header(h) for h in data['headers']]
+        headers[headers.index(normalize_header(args.id_field))] = '_id'
         sheets = workflow_rows(headers, data['rows'], rows, args.use_nature)
         project_name = (args.project_name or '').strip()
+        if not project_name:
+            warnings.append('Project name omitted; title uses 建设项目')
+        warnings = sorted(set(warnings))
         for sheet in sheets:
             sheet['title'] = ' '.join(filter(None, [project_name or '建设项目',
                 (args.use_nature or '') + '使用林地', sheet['name']]))

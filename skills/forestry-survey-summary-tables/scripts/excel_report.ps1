@@ -109,8 +109,6 @@ try {
    $table.Borders.LineStyle=1;$table.Borders.Weight=2
   }
   $all=$s.Range($s.Cells.Item(1,1),$s.Cells.Item($last,$nc))
-  $s.DisplayPageBreaks=$false
-  $b.Activate();$s.Activate();$e.ActiveWindow.View=1
 
  }
  $order=@($j.input_names)+@($j.sheets | ForEach-Object {$_.name})
@@ -122,7 +120,6 @@ try {
   foreach($f in $d.font_formats){$font=$s.Range($f[0]).Font;$font.Name=$f[1];$font.Size=[double]$f[2];$font.Bold=[bool]$f[3];$font.Italic=[bool]$f[4]}
  }
  $t.Close($false);$t=$null;$e.Calculation=-4105;$e.CalculateFullRebuild()
- $b.Worksheets.Item('内业处理表').Activate()
  $b.SaveAs($j.candidate,51);$b.Close($false);$b=$null
  Write-Output 'Excel candidate saved; title restoration and native validation pending'
  return

@@ -2,6 +2,39 @@
 $ErrorActionPreference = 'Stop'
 $j = Get-Content -LiteralPath $Job -Raw -Encoding UTF8 | ConvertFrom-Json
 $excel = $null; $book = $null
+function Normalize-Header([object]$Value) {
+    if ($null -eq $Value) { return '' }
+    return ([string]$Value -replace '\s', '')
+}
+function Remove-AbsolutePathMetadata([string]$Path) {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $clean = "$Path.cleaning"
+    $source = [IO.Compression.ZipFile]::OpenRead($Path)
+    $target = [IO.Compression.ZipFile]::Open($clean, [IO.Compression.ZipArchiveMode]::Create)
+    try {
+        foreach ($entry in $source.Entries) {
+            $destination = $target.CreateEntry($entry.FullName, [IO.Compression.CompressionLevel]::Optimal)
+            $input = $entry.Open(); $output = $destination.Open()
+            try {
+                $buffer = New-Object IO.MemoryStream
+                $input.CopyTo($buffer)
+                $bytes = $buffer.ToArray()
+                if ($entry.FullName -eq 'xl/workbook.xml') {
+                    $xml = [Text.Encoding]::UTF8.GetString($bytes)
+                    $xml = [regex]::Replace($xml, '<mc:AlternateContent\b[^>]*>\s*<mc:Choice\b[^>]*>\s*<[^:>]+:absPath\b[^>]*/>\s*</mc:Choice>\s*</mc:AlternateContent>', '', [Text.RegularExpressions.RegexOptions]::Singleline)
+                    $bytes = [Text.Encoding]::UTF8.GetBytes($xml)
+                }
+                $output.Write($bytes, 0, $bytes.Length)
+            } finally {
+                $buffer.Dispose(); $output.Dispose(); $input.Dispose()
+            }
+        }
+    } finally {
+        $target.Dispose(); $source.Dispose()
+    }
+    [IO.File]::Copy($clean, $Path, $true)
+    [IO.File]::Delete($clean)
+}
 try {
     $excel = New-Object -ComObject Excel.Application
     $excel.Visible = $false
@@ -16,13 +49,14 @@ try {
         $used = $s.UsedRange
         if ($used.Row -ne 1 -or $used.Column -ne 1) { throw 'Headers must start at A1' }
         $headers = @(); $rows = @()
+        $idHeader = Normalize-Header $j.id_field
         for ($c=1; $c -le $used.Columns.Count; $c++) { $headers += [string]$s.Cells.Item(1,$c).Value2 }
         for ($r=2; $r -le $used.Rows.Count; $r++) {
             $row = @()
             for ($c=1; $c -le $used.Columns.Count; $c++) {
                 $cell=$s.Cells.Item($r,$c); $value=$cell.Value2
                 # Preserve identifiers formatted with leading zeroes; numbers stay numeric.
-                if ($headers[$c-1] -in @('LIN_BAN','XIAO_BAN','小班编')) { if ($null -ne $value) { $value=[string]$cell.Text } }
+                if ((Normalize-Header $headers[$c-1]) -in @('LIN_BAN','XIAO_BAN',$idHeader)) { if ($null -ne $value) { $value=[string]$cell.Text } }
                 $row += $value
             }
             $rows += ,$row
@@ -34,70 +68,25 @@ try {
             $s=$book.Worksheets.Item($d.name);$n=$d.rows.Count;$nc=$d.rows[0].Count
             if($n -lt 1){throw 'No rows'}
             $last=$n+3;$oldlast=$s.UsedRange.Rows.Count
-            $height=$s.Rows.Item(4).RowHeight
-            $headerHeight=$s.Rows.Item(3).RowHeight
             $s.Range($s.Cells.Item(4,1),$s.Cells.Item([Math]::Max($last,$oldlast),$nc)).ClearContents()
             if($last -gt 4){$s.Range($s.Cells.Item(4,1),$s.Cells.Item(4,$nc)).Copy($s.Range($s.Cells.Item(5,1),$s.Cells.Item($last,$nc)))}
-            if($oldlast -gt $last){$s.Range($s.Cells.Item($last+1,1),$s.Cells.Item($oldlast,$nc)).Clear()}
-            $s.Range($s.Cells.Item(4,1),$s.Cells.Item($last,$nc)).RowHeight=$height
             for($r=0;$r -lt $n;$r++){for($c=0;$c -lt $nc;$c++){
                 $v=$d.rows[$r][$c];$cell=$s.Cells.Item($r+4,$c+1)
                 if($null -eq $v){continue}
-                if($v -is [string]){$cell.NumberFormat='@';$cell.Value2=[string]$v}else{$cell.Value2=[double]$v}
+                if($v -is [string]){$cell.Value2=[string]$v}else{$cell.Value2=[double]$v}
             }}
             $s.Cells.Item(1,1).Value2=[string]$d.title
-            # Fit headers and data only, excluding merged title/subtitle rows.
-            # Excel AutoFit ignores wrapped cells; restore wrapping afterwards.
-            for($c=1;$c -le $nc;$c++){
-                $range=$s.Range($s.Cells.Item(3,$c),$s.Cells.Item($last,$c))
-                $wrap=$range.WrapText
-                $wraps=@()
-                if($null -eq $wrap){for($r=3;$r -le $last;$r++){$wraps+= [bool]$s.Cells.Item($r,$c).WrapText}}
-                $range.WrapText=$false
-                $range.Columns.AutoFit() | Out-Null
-                if($null -eq $wrap){for($r=3;$r -le $last;$r++){$s.Cells.Item($r,$c).WrapText=$wraps[$r-3]}}
-                else{$range.WrapText=$wrap}
-            }
-            if($d.name -eq '外业调查表'){
-                $s.Columns.Item(4).ColumnWidth=10
-                $s.Columns.Item(11).ColumnWidth=10
-                foreach($c in @(13,14,16,17,18,19,20,21)){$s.Columns.Item($c).ColumnWidth=3.5}
-                $s.Columns.Item(22).ColumnWidth=15
-            }
-            # Keep source heights; field rows follow the compact layout.
-            if($d.name -eq '外业调查表'){
-                $s.Rows.Item(1).RowHeight=20
-                $s.Rows.Item(3).AutoFit() | Out-Null
-                # Native AutoFit can clip CJK glyphs in multiline headers.
-                $s.Rows.Item(3).RowHeight=$s.Rows.Item(3).RowHeight+6
-                $s.Range($s.Cells.Item(4,1),$s.Cells.Item($last,$nc)).RowHeight=20
-                # Subtitle is merged; measure its short text before remerging.
-                $subtitle=$s.Cells.Item(2,1).MergeArea
-                $subtitle.UnMerge();$s.Rows.Item(2).AutoFit() | Out-Null;$subtitle.Merge()
-            }else{
-                $s.Rows.Item(3).RowHeight=$headerHeight
-                $s.Range($s.Cells.Item(4,1),$s.Cells.Item($last,$nc)).RowHeight=$height
-            }
-            $s.PageSetup.PrintArea=$s.Range($s.Cells.Item(1,1),$s.Cells.Item($last,$nc)).Address()
         }
         $book.Worksheets.Item(1).Activate()
         $book.SaveAs($j.output,51) | Out-Null
         $book.Close($false);$book=$null
+        Remove-AbsolutePathMetadata $j.output
         $book=$excel.Workbooks.Open($j.output,0,$true)
         if($book.Worksheets.Count -ne 2){throw 'Expected source and field sheets'}
         foreach($d in $j.sheets){
             $s=$book.Worksheets.Item($d.name)
             if($s.Cells.Item(3,$d.rows[0].Count+1).Value2){throw 'Unexpected extra header'}
             if([string]$s.Cells.Item(1,1).Value2 -cne $d.title){throw 'Title mismatch'}
-            if($d.name -eq '外业调查表'){
-                if($s.Rows.Item(1).RowHeight -ne 20){throw 'Field title height mismatch'}
-                for($r=4;$r -le $d.rows.Count+3;$r++){
-                    if($s.Rows.Item($r).RowHeight -ne 20){throw 'Field data height mismatch'}
-                }
-                foreach($pair in @(@(4,10),@(11,10),@(13,3.5),@(14,3.5),@(16,3.5),@(17,3.5),@(18,3.5),@(19,3.5),@(20,3.5),@(21,3.5),@(22,15))){
-                    if([Math]::Abs($s.Columns.Item($pair[0]).ColumnWidth-$pair[1]) -gt 0.1){throw 'Fixed column width mismatch'}
-                }
-            }
             for($r=0;$r -lt $d.rows.Count;$r++){for($c=0;$c -lt $d.rows[$r].Count;$c++){
                 $expected=$d.rows[$r][$c];$cell=$s.Cells.Item($r+4,$c+1);$actual=$cell.Value2
                 if($cell.HasFormula){throw 'Source and field sheets must be independent'}
