@@ -181,7 +181,9 @@ class SurveyTests(unittest.TestCase):
   sheets=summary.build(summary.prepare(book,cfg),cfg);fee=next(s for s in sheets if s['name']=='B.7')
   self.assertFalse(any('临时使用林地' in str(value) for value in fee['cells'].values()))
   self.assertEqual(fee['cells']['A22'],'')
-  self.assertIn('A22:M25',fee['merges'])
+  self.assertIn('A22:M29',fee['merges'])
+  self.assertEqual(fee['style_rows'],{str(row):22+((row-22)%4) for row in range(22,30)})
+  self.assertEqual(fee['last'],29)
   self.assertIn(str(fee['last']),fee['style_rows'])
 
  def test_summary_manual_continuation_bodies_are_blank(self):
@@ -191,6 +193,12 @@ class SurveyTests(unittest.TestCase):
   for address in ['A25','A27','A29','A31','A33','A35']:
    self.assertEqual(status['cells'][address],'')
   self.assertEqual(status['cells']['A37'],'编制单位意见（单位印章）：')
+  self.assertEqual(status['alignments'],[
+   ['A25:S25','left','center'],['A27:S27','left','center'],
+   ['A29:S29','left','center'],['A31:S31','left','center'],
+   ['A33:S33','left','center'],['A35:S35','left','center'],
+   ['A37:S37','left','center'],
+  ])
 
  def test_summary_ecology_none_is_blank_in_a1(self):
   summary,book,cfg=self.summary_fixture()
@@ -255,7 +263,7 @@ class SurveyTests(unittest.TestCase):
     before=summary.read_book(candidate)
     after=summary.read_book(candidate)
     summary.verify_preserved(before,after,summary.INPUT_NAMES)
-  def test_summary_repairs_full_report_fonts_including_color(self):
+  def test_summary_report_fonts_drop_color(self):
    summary,book,cfg=self.summary_fixture()
    template=summary.ROOT/'assets/report-headers.xlsx'
    payload=summary.build(summary.prepare(book,cfg),cfg)
@@ -281,8 +289,14 @@ class SurveyTests(unittest.TestCase):
      def font(sh):
       xf=sh['styles'].find('s:cellXfs',summary.NS)[sh['cells']['A1']['style']]
       return E.tostring(sh['styles'].find('s:fonts',summary.NS)[int(xf.attrib.get('fontId',0))])
-     self.assertEqual(font(a),font(b))
-    self.assertEqual(summary.restore_style_components(template,candidate,'font',payload),0)
+     def colorless(value):
+      node=E.fromstring(value)
+      for child in list(node):
+       if child.tag=='{'+summary.NS['s']+'}color':node.remove(child)
+      return E.tostring(node)
+     self.assertEqual(colorless(font(a)),colorless(font(b)))
+     self.assertIsNone(E.fromstring(font(a)).find('s:color',summary.NS))
+   self.assertEqual(summary.restore_style_components(template,candidate,'font',payload),0)
   def test_summary_preservation_rejects_retained_sheet_metadata_drift(self):
    from copy import deepcopy
    summary,book,cfg=self.summary_fixture()

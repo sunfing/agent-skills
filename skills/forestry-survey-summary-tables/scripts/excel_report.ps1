@@ -101,6 +101,14 @@ try {
    else{$cell.Value2=[double]$p.Value}
   }
   foreach($m in $d.merges){[void]$s.Range($m).Merge()}
+  foreach($a in $d.alignments){
+   $range=$s.Range($a[0])
+   if($a[1] -eq 'left'){$range.HorizontalAlignment=-4131}
+   if($a[1] -eq 'center'){$range.HorizontalAlignment=-4108}
+   if($a[2] -eq 'top'){$range.VerticalAlignment=-4160}
+   if($a[2] -eq 'center'){$range.VerticalAlignment=-4108}
+   $range.WrapText=$true
+  }
   foreach($f in $d.formats){$s.Range($f[0]).NumberFormat=$f[1]}
   foreach($p in $d.heights.PSObject.Properties){$s.Rows.Item([int]$p.Name).RowHeight=[double]$p.Value}
   if(-not $d.preserve_body){

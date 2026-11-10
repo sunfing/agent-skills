@@ -226,7 +226,7 @@ def groups(records):
 
 
 def make_sheet(name, head, cols):
-    return dict(name=name,head=head,cols=cols,cells={},merges=[],formats=[],heights={},checks={})
+    return dict(name=name,head=head,cols=cols,cells={},merges=[],formats=[],heights={},checks={},alignments=[])
 
 
 def merge(s, address, value):
@@ -449,6 +449,12 @@ def build(records,cfg):
         'A25':'','A27':'','A29':'','A31':'','A33':'','A35':'',
         'A37':'编制单位意见（单位印章）：',
     })
+    status['alignments']=[
+        ['A25:S25','left','center'],['A27:S27','left','center'],
+        ['A29:S29','left','center'],['A31:S31','left','center'],
+        ['A33:S33','left','center'],['A35:S35','left','center'],
+        ['A37:S37','left','center'],
+    ]
     for metric,start in [('area',8),('volume',11)]:
         for j,o in enumerate(owners):
             row=start+j;base=base_criteria((),o);totals.put(status,f'D{row}',metric,base)
@@ -509,12 +515,12 @@ def build_fee(records,cfg,gs,totals):
                 if rate is None:supported=False;continue
                 amount+=r['area']*rate*factor*(2 if r['forest_category'] in doubled else 1)
             if supported:s['checks'][f'G{row}']=amount
-    s['table_last']=6+len(gs)*3;s['last']=s['table_last']+4
-    note_start=s['table_last']+1;note_end=note_start+3
-    # Rows 22-25 are reserved for manual completion and must remain the
-    # template's blank merged area with its native 18-point row heights.
+    s['table_last']=6+len(gs)*3;s['last']=s['table_last']+8
+    note_start=s['table_last']+1;note_end=note_start+7
+    # Rows 22-29 are reserved for manual completion. Repeat the original
+    # four-row template pattern once, without changing its font properties.
     merge(s,f'A{note_start}:M{note_end}','')
-    s['style_rows']={str(row):row for row in range(note_start,note_end+1)}
+    s['style_rows']={str(row):note_start+((row-note_start)%4) for row in range(note_start,note_end+1)}
     s['formats']=[(f'F7:M{s["table_last"]}','0.0000;-0.0000;;@'),(f'I7:I{s["table_last"]}','0.00;-0.00;;@'),(f'L7:L{s["table_last"]}','0.00;-0.00;;@')]
     return s
 
@@ -612,6 +618,14 @@ def font_anchor(sheet, address):
     return address
 
 
+def report_font_without_color(node):
+    """Generated report fonts use automatic color; preserve all other font attributes."""
+    node=deepcopy(node)
+    for child in list(node):
+        if child.tag=='{'+NS['s']+'}color':node.remove(child)
+    return node
+
+
 def restore_style_components(source, candidate, component="font", report_payload=None):
     """Repair Excel's saved style drift without resaving cached formulas.
 
@@ -671,6 +685,8 @@ def restore_style_components(source, candidate, component="font", report_payload
             old_xf = old['styles'].find('s:cellXfs', NS)[cell['style']]
             old_component_id = int(old_xf.attrib.get(component+'Id', 0))
             old_component = old['styles'].find('s:'+component+'s', NS)[old_component_id]
+            if report_payload is not None and component=='font':
+                old_component=report_font_without_color(old_component)
             new_style_id = new['cells'][address]['style']
             new_xf = new['styles'].find('s:cellXfs', NS)[new_style_id]
             new_component = new['styles'].find('s:'+component+'s', NS)[int(new_xf.attrib.get(component+'Id', 0))]
@@ -883,7 +899,7 @@ def validate_candidate(source, candidate, payload):
             font_xf=ref['styles'].find('s:cellXfs',NS)[font_cell['style']]
             source_font=ref['styles'].find('s:fonts',NS)[int(font_xf.attrib.get('fontId',0))]
             font=sh['styles'].find('s:fonts',NS)[int(xf.attrib.get('fontId',0))]
-            if ET.tostring(font)!=ET.tostring(source_font):
+            if ET.tostring(report_font_without_color(font))!=ET.tostring(report_font_without_color(source_font)):
                 raise ValueError(f'Unexpected report font: {s["name"]}!{addr}')
         formats={addr:fmt for area,fmt in s['formats'] for addr in addresses(area)}
         for addr,fmt in formats.items():
@@ -903,6 +919,12 @@ def validate_candidate(source, candidate, payload):
             align=xf.find('s:alignment',NS)
             if align is None or align.attrib.get('horizontal')!='left' or align.attrib.get('wrapText')!='1':
                 raise ValueError(f'Note alignment changed: {s["name"]}!A{row}')
+        for area,horizontal,vertical in s.get('alignments',[]):
+            anchor=area.split(':',1)[0]
+            xf=sh['styles'].find('s:cellXfs',NS)[sh['cells'][anchor]['style']]
+            align=xf.find('s:alignment',NS)
+            if align is None or align.attrib.get('horizontal')!=horizontal or align.attrib.get('vertical')!=vertical or align.attrib.get('wrapText')!='1':
+                raise ValueError(f'Alignment changed: {s["name"]}!{anchor}')
         for addr,c in sh['cells'].items():
             if c['type']=='e' or (isinstance(c['value'],str) and c['value'].startswith('=')):raise ValueError(f'Formula error/text: {s["name"]}!{addr}')
         for addr,v in s['cells'].items():
