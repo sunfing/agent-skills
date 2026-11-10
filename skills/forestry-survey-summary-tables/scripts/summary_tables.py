@@ -477,7 +477,9 @@ def build(records,cfg):
 
 def build_fee(records,cfg,gs,totals):
     fee=cfg['fee'];s=make_sheet('B.7',7,13)
-    s['cells']['A3']='单位：面积—公顷；基础单价—元/平方米；金额—万元'
+    # The template reserves the merged A2:M2 row for the unit note.
+    # A3 is the first table header and must remain “市”.
+    s['cells']['A2']='单位：面积—公顷；基础单价—元/平方米；金额—万元'
     s['cells']['A1']=report_title(cfg,'森林植被恢复费'+('参考测算表' if fee['mode']=='reference' else '测算表'),'B.7')
     if fee['mode']=='not_applicable':
         raise ValueError('fee.mode must be reference or charge; both project natures require vegetation restoration measurement')
